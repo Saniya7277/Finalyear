@@ -1,0 +1,600 @@
+import { Router, Request, Response } from "express";
+import {
+  db,
+  usersTable,
+  invitationsTable,
+  teammatesTable,
+} from "@workspace/db";
+import { eq, and, ne, or, sql } from "drizzle-orm";
+import { requireAuth, getClerkId } from "../middlewares/auth";
+import { sendInvitationEmail, isMailConfigured } from "../lib/mailer";
+import crypto from "crypto";
+
+/** Where the invitation link points. */
+function buildInvitationLink(token: string): string {
+  const base = process.env.FRONTEND_URL || "http://localhost:8081";
+  return `${base.replace(/\/+$/, "")}/accept-invitation/${token}`;
+}
+
+/** Best display name for the person doing the inviting. */
+function inviterDisplayName(user: { name: string | null; email: string }): string {
+  return user.name?.trim() || user.email.split("@")[0];
+}
+
+const router = Router();
+
+// Apply auth middleware to all routes
+router.use(requireAuth);
+
+/**
+ * POST /api/teammates/sync-user
+ * Sync or create Clerk user in database
+ * Called when user logs in
+ */
+router.post(
+  "/sync-user",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const clerkId = getClerkId(req);
+      const { email, name } = req.body;
+
+      if (!email) {
+        res.status(400).json({ error: "Email is required" });
+        return;
+      }
+
+      const normalizedEmail = String(email).trim().toLowerCase();
+
+      // Upsert user - create if not exists, update if exists
+      const existingUser = await db
+        .select()
+        .from(usersTable)
+        .where(eq(usersTable.clerkId, clerkId))
+        .limit(1);
+
+      if (existingUser.length === 0) {
+        // `email` is unique. A row can already exist under a different Clerk id
+        // if the account was recreated or the row was seeded by hand - report
+        // that plainly instead of surfacing a Postgres constraint error.
+        const emailOwner = await db
+          .select({ clerkId: usersTable.clerkId })
+          .from(usersTable)
+          .where(eq(usersTable.email, normalizedEmail))
+          .limit(1);
+
+        if (emailOwner.length > 0) {
+          res.status(409).json({
+            error:
+              "That email is already registered to a different account on this server.",
+          });
+          return;
+        }
+
+        await db.insert(usersTable).values({
+          clerkId,
+          email: normalizedEmail,
+          name: name || normalizedEmail.split("@")[0],
+        });
+      } else {
+        // Update email/name if provided
+        await db
+          .update(usersTable)
+          .set({
+            email: normalizedEmail,
+            name: name || existingUser[0].name,
+          })
+          .where(eq(usersTable.clerkId, clerkId));
+      }
+
+      res.json({ success: true, clerkId });
+      return;
+    } catch (error) {
+      console.error("Error syncing user:", error);
+      res.status(500).json({ error: "Failed to sync user" });
+      return;
+    }
+  },
+);
+
+/**
+ * GET /api/teammates/list
+ * Get all current teammates for the authenticated user
+ */
+router.get("/list", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const clerkId = getClerkId(req);
+
+    const teammates = await db
+      .select()
+      .from(teammatesTable)
+      .where(eq(teammatesTable.userId, clerkId));
+
+    const teammatteDetails: Array<typeof usersTable.$inferSelect | null> =
+      await Promise.all(
+        teammates.map(async (tm) => {
+          const user = await db
+            .select()
+            .from(usersTable)
+            .where(eq(usersTable.clerkId, tm.teammateUserId))
+            .limit(1);
+          return user[0] || null;
+        }),
+      );
+
+    res.json({
+      teammates: teammatteDetails.filter(
+        (t): t is typeof usersTable.$inferSelect => t !== null,
+      ),
+    });
+    return;
+  } catch (error) {
+    console.error("Error listing teammates:", error);
+    res.status(500).json({ error: "Failed to list teammates" });
+    return;
+  }
+});
+
+/**
+ * GET /api/teammates/search?q=<query>
+ * Search for users by name or email, excluding the authenticated user.
+ */
+router.get("/search", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const clerkId = getClerkId(req);
+    const rawQuery = typeof req.query.q === "string" ? req.query.q : "";
+    const normalizedQuery = rawQuery.trim();
+
+    if (normalizedQuery.length < 2) {
+      res.status(400).json({ error: "Query must be at least 2 characters" });
+      return;
+    }
+
+    const searchValue = `%${normalizedQuery.toLowerCase()}%`;
+
+    const matches = await db
+      .select({
+        clerkId: usersTable.clerkId,
+        name: usersTable.name,
+        email: usersTable.email,
+      })
+      .from(usersTable)
+      .where(
+        and(
+          ne(usersTable.clerkId, clerkId),
+          or(
+            sql`LOWER(${usersTable.name}) LIKE ${searchValue}`,
+            sql`LOWER(${usersTable.email}) LIKE ${searchValue}`,
+          ),
+        ),
+      )
+      .limit(20);
+
+    res.json({ users: matches });
+    return;
+  } catch (error) {
+    console.error("Error searching teammates:", error);
+    res.status(500).json({ error: "Failed to search users" });
+    return;
+  }
+});
+
+/**
+ * POST /api/teammates/invite
+ * Create a new invitation for an email address
+ *
+ * Body: { invitedEmail: string }
+ */
+router.post("/invite", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const clerkId = getClerkId(req);
+    const { invitedEmail } = req.body;
+
+    if (!invitedEmail) {
+      res.status(400).json({ error: "Email is required" });
+      return;
+    }
+
+    const normalizedEmail = String(invitedEmail).trim().toLowerCase();
+
+    // Prevent self-invitation
+    const user = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.clerkId, clerkId))
+      .limit(1);
+
+    if (!user.length) {
+      // The Clerk session is valid but no row was ever created for it. The app
+      // calls /sync-user on sign-in; if that failed, every teammate and file
+      // feature breaks here rather than at sign-in, which is confusing.
+      res.status(404).json({
+        error:
+          "Your profile has not been synced to the server yet. Sign out and back in, then try again.",
+      });
+      return;
+    }
+
+    if (user[0].email === normalizedEmail) {
+      res.status(400).json({ error: "Cannot invite yourself as a teammate" });
+      return;
+    }
+
+    // Check if invitation already pending
+    const existingInvitation = await db
+      .select()
+      .from(invitationsTable)
+      .where(
+        and(
+          eq(invitationsTable.inviterId, clerkId),
+          eq(invitationsTable.invitedEmail, normalizedEmail),
+          eq(invitationsTable.status, "pending"),
+        ),
+      )
+      .limit(1);
+
+    if (existingInvitation.length > 0) {
+      res
+        .status(400)
+        .json({ error: "Invitation already pending for this email" });
+      return;
+    }
+
+    // Check if already teammates
+    const recipientUser = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.email, normalizedEmail))
+      .limit(1);
+
+    if (recipientUser.length > 0) {
+      const isTeammate = await db
+        .select()
+        .from(teammatesTable)
+        .where(
+          and(
+            eq(teammatesTable.userId, clerkId),
+            eq(teammatesTable.teammateUserId, recipientUser[0].clerkId),
+          ),
+        )
+        .limit(1);
+
+      if (isTeammate.length > 0) {
+        res.status(400).json({ error: "Already teammates with this user" });
+        return;
+      }
+    }
+
+    // Generate secure random token (32 bytes = 64 hex chars)
+    const token = crypto.randomBytes(32).toString("hex");
+
+    // Expiry: 7 days from now
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    await db.insert(invitationsTable).values({
+      inviterId: clerkId,
+      invitedEmail: normalizedEmail,
+      token,
+      status: "pending",
+      expiresAt,
+    });
+
+    const invitationLink = buildInvitationLink(token);
+
+    // Email the link. A delivery failure must not lose the invitation - the
+    // link is still returned so the inviter can copy or share it manually.
+    const delivery = await sendInvitationEmail({
+      to: normalizedEmail,
+      inviterName: inviterDisplayName(user[0]),
+      inviterEmail: user[0].email,
+      invitationLink,
+      expiresAt,
+    });
+
+    res.json({
+      success: true,
+      token,
+      invitationLink,
+      invitedEmail: normalizedEmail,
+      expiresAt,
+      emailSent: delivery.sent,
+      emailError: delivery.error ?? null,
+      mailConfigured: isMailConfigured(),
+    });
+    return;
+  } catch (error) {
+    console.error("Error creating invitation:", error);
+    res.status(500).json({ error: "Failed to create invitation" });
+    return;
+  }
+});
+
+/**
+ * POST /api/teammates/invite/resend
+ * Re-send the email for an invitation the caller already created.
+ *
+ * Body: { token: string }
+ */
+router.post(
+  "/invite/resend",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const clerkId = getClerkId(req);
+      const { token } = req.body;
+
+      if (!token) {
+        res.status(400).json({ error: "Token is required" });
+        return;
+      }
+
+      const invitation = await db
+        .select()
+        .from(invitationsTable)
+        .where(
+          and(
+            eq(invitationsTable.token, token),
+            eq(invitationsTable.inviterId, clerkId),
+          ),
+        )
+        .limit(1);
+
+      if (!invitation.length) {
+        res.status(404).json({ error: "Invitation not found" });
+        return;
+      }
+
+      const inv = invitation[0];
+
+      if (inv.status !== "pending") {
+        res.status(400).json({ error: `Invitation already ${inv.status}` });
+        return;
+      }
+
+      if (new Date() > inv.expiresAt) {
+        await db
+          .update(invitationsTable)
+          .set({ status: "expired" })
+          .where(eq(invitationsTable.id, inv.id));
+        res.status(400).json({ error: "Invitation has expired" });
+        return;
+      }
+
+      const inviter = await db
+        .select()
+        .from(usersTable)
+        .where(eq(usersTable.clerkId, clerkId))
+        .limit(1);
+
+      if (!inviter.length) {
+        res.status(404).json({ error: "User not found" });
+        return;
+      }
+
+      const delivery = await sendInvitationEmail({
+        to: inv.invitedEmail,
+        inviterName: inviterDisplayName(inviter[0]),
+        inviterEmail: inviter[0].email,
+        invitationLink: buildInvitationLink(inv.token),
+        expiresAt: inv.expiresAt,
+      });
+
+      if (!delivery.sent) {
+        res.status(502).json({
+          error: delivery.error || "Failed to send the invitation email.",
+          mailConfigured: isMailConfigured(),
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        emailSent: true,
+        invitedEmail: inv.invitedEmail,
+      });
+      return;
+    } catch (error) {
+      console.error("Error resending invitation:", error);
+      res.status(500).json({ error: "Failed to resend the invitation" });
+      return;
+    }
+  },
+);
+
+/**
+ * GET /api/teammates/invitations/pending
+ * Get all pending invitations received by the current user
+ */
+router.get(
+  "/invitations/pending",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const clerkId = getClerkId(req);
+
+      // Get user email
+      const user = await db
+        .select()
+        .from(usersTable)
+        .where(eq(usersTable.clerkId, clerkId))
+        .limit(1);
+
+      if (!user.length) {
+        res.status(404).json({ error: "User not found" });
+        return;
+      }
+
+      // Get pending invitations for this user's email
+      const invitations = await db
+        .select()
+        .from(invitationsTable)
+        .where(
+          and(
+            eq(invitationsTable.invitedEmail, user[0].email),
+            eq(invitationsTable.status, "pending"),
+          ),
+        );
+
+      // Get inviter details
+      const invitationsWithDetails = await Promise.all(
+        invitations.map(async (inv) => {
+          const inviter = await db
+            .select()
+            .from(usersTable)
+            .where(eq(usersTable.clerkId, inv.inviterId))
+            .limit(1);
+          return {
+            ...inv,
+            inviterName: inviter[0]?.name || "Unknown",
+            inviterEmail: inviter[0]?.email || "unknown@example.com",
+          };
+        }),
+      );
+
+      res.json({
+        invitations: invitationsWithDetails,
+      });
+      return;
+    } catch (error) {
+      console.error("Error listing pending invitations:", error);
+      res.status(500).json({ error: "Failed to list invitations" });
+      return;
+    }
+  },
+);
+
+/**
+ * POST /api/teammates/accept
+ * Accept an invitation using the token
+ *
+ * Body: { token: string }
+ */
+router.post("/accept", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const clerkId = getClerkId(req);
+    const { token } = req.body;
+
+    if (!token) {
+      res.status(400).json({ error: "Token is required" });
+      return;
+    }
+
+    // Get invitation
+    const invitation = await db
+      .select()
+      .from(invitationsTable)
+      .where(eq(invitationsTable.token, token))
+      .limit(1);
+
+    if (!invitation.length) {
+      res.status(404).json({ error: "Invitation not found" });
+      return;
+    }
+
+    const inv = invitation[0];
+
+    // Check if already used
+    if (inv.status !== "pending") {
+      res.status(400).json({
+        error: `Invitation already ${inv.status}`,
+      });
+      return;
+    }
+
+    // Check if expired
+    if (new Date() > inv.expiresAt) {
+      await db
+        .update(invitationsTable)
+        .set({ status: "expired" })
+        .where(eq(invitationsTable.id, inv.id));
+      res.status(400).json({ error: "Invitation has expired" });
+      return;
+    }
+
+    // Verify authenticated user's email matches invited email
+    const user = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.clerkId, clerkId))
+      .limit(1);
+
+    if (!user.length) {
+      res.status(404).json({
+        error:
+          "Your profile has not been synced to the server yet. Sign out and back in, then open the invitation link again.",
+      });
+      return;
+    }
+
+    if (user[0].email !== inv.invitedEmail) {
+      res.status(403).json({
+        error:
+          "Email mismatch - you must accept with the invited email address",
+      });
+      return;
+    }
+
+    // Get inviter's user object
+    const inviter = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.clerkId, inv.inviterId))
+      .limit(1);
+
+    if (!inviter.length) {
+      res.status(404).json({ error: "Inviter not found" });
+      return;
+    }
+
+    // Create bidirectional teammate relationship
+    // Only create if not already teammates
+    const existingTeammate = await db
+      .select()
+      .from(teammatesTable)
+      .where(
+        and(
+          eq(teammatesTable.userId, inv.inviterId),
+          eq(teammatesTable.teammateUserId, clerkId),
+        ),
+      )
+      .limit(1);
+
+    if (!existingTeammate.length) {
+      // Add both directions to be teammates
+      await Promise.all([
+        db.insert(teammatesTable).values({
+          userId: inv.inviterId,
+          teammateUserId: clerkId,
+        }),
+        db.insert(teammatesTable).values({
+          userId: clerkId,
+          teammateUserId: inv.inviterId,
+        }),
+      ]);
+    }
+
+    // Mark invitation as accepted
+    await db
+      .update(invitationsTable)
+      .set({
+        status: "accepted",
+        acceptedAt: new Date(),
+        acceptedByUserId: clerkId,
+      })
+      .where(eq(invitationsTable.id, inv.id));
+
+    res.json({
+      success: true,
+      message: "Invitation accepted",
+      teammate: {
+        id: inviter[0].clerkId,
+        name: inviter[0].name,
+        email: inviter[0].email,
+      },
+    });
+    return;
+  } catch (error) {
+    console.error("Error accepting invitation:", error);
+    res.status(500).json({ error: "Failed to accept invitation" });
+    return;
+  }
+});
+
+export default router;

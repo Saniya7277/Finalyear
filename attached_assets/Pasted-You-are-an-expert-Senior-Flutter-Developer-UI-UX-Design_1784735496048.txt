@@ -1,0 +1,118 @@
+You are an expert Senior Flutter Developer, UI/UX Designer, Cybersecurity Software Architect, and Mobile App Engineer.
+
+Build a COMPLETE Android mobile application using Flutter (latest stable version) and Dart.
+
+APP NAME:
+SecureSphere
+
+PROJECT TITLE:
+Privacy-Preserving Intelligent Collaboration Platform
+
+This is a PURE Android mobile application, NOT a website.
+
+The application should have a premium futuristic 2.5D/3D aesthetic inspired by Apple VisionOS, Proton Drive, Tesla UI, Google Drive, and Nothing OS.
+
+Use Material 3, Glassmorphism, soft shadows, gradient backgrounds, floating cards, depth effects, animated icons, smooth transitions, Hero animations, shimmer loading, Lottie animations, beautiful typography (Google Fonts), and modern cyber-security colors (Dark Navy, Electric Blue, Cyan Glow).
+
+The application must look like a professional commercial app available on Google Play Store.
+
+Build a clean, modular Flutter project with proper folder structure, reusable widgets, theme files, models, services, utilities, constants, and separate screens. Never place everything inside main.dart.
+
+Generate realistic dummy data because backend integration will be done later.
+
+Create the following screens:
+
+• Splash Screen
+• Onboarding
+• Login
+• Register
+• Home Dashboard
+• My Files
+• File Details
+• Upload File
+• Secure Search
+• Shared Files
+• Notifications
+• AI Assistant (dummy UI)
+• Profile
+• Settings
+
+Dashboard should include:
+
+• Security Score
+• Recent Files
+• Storage Usage
+• Quick Actions
+• Floating Upload Button
+• Animated Secure Cloud
+• Statistics Cards
+
+Files should display PDF, DOCX, PPTX, XLSX, Images and include encrypted status badges.
+
+Upload screen should include beautiful upload animations and encryption progress UI.
+
+Search screen should contain search bar, recent searches, filters and encrypted search results.
+
+Profile should display user information, storage usage, security settings and dark mode.
+
+Implement Bottom Navigation with:
+Home
+Files
+Upload
+Search
+Profile
+
+MOST IMPORTANT FEATURE
+
+Create a complete collaboration system similar to WhatsApp or Google Drive.
+
+Users should be able to:
+
+• Search users
+• Add members
+• Invite collaborators
+• Accept or Reject invitations
+• View member profile
+• Share encrypted files with selected members
+• View shared files
+• Remove collaborators
+• Manage permissions (Viewer, Editor, Owner)
+• Show online/offline status (dummy)
+• Display profile pictures
+• Member list should look modern like WhatsApp contacts.
+
+Create dummy users such as:
+
+Alice
+Bob
+John
+Emma
+Michael
+Sophia
+Varsha
+
+Use beautiful contact cards with search functionality.
+
+Prepare architecture for future backend integration with placeholder services:
+
+AuthenticationService
+EncryptionService
+UploadService
+SearchService
+SharingService
+NotificationService
+AIService
+
+Do NOT implement backend APIs.
+
+Do NOT implement encryption logic.
+
+Do NOT implement AI.
+
+Only prepare clean architecture with dummy data.
+
+Use Clean Architecture and Flutter best practices.
+
+Generate production-quality code.
+
+If the response becomes too long, automatically continue generating until the complete project is finished without skipping any files.

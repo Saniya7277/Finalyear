@@ -1,0 +1,23 @@
+kind = "mobile"
+previewPath = "/"
+title = "SecureSphere"
+version = "1.0.0"
+id = "artifacts/securesphere"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 24512
+
+[services.development]
+run = "pnpm --filter @workspace/securesphere run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/securesphere", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/securesphere", "run", "serve" ]
+
+[services.env]
+PORT = "24512"
+BASE_PATH = "/"

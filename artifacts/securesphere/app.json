@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "SecureSphere",
+    "slug": "securesphere",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "securesphere",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/images/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#050B18"
+    },
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {
+      "backgroundColor": "#050B18"
+    },
+    "web": {
+      "favicon": "./assets/images/icon.png",
+      "backgroundColor": "#050B18"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "origin": "https://replit.com/"
+        }
+      ],
+      "expo-font",
+      "expo-web-browser",
+      "@clerk/expo",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
