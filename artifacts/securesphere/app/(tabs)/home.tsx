@@ -1,6 +1,4 @@
-import { useRouter } from "expo-router";
-import { useClerk } from "@clerk/expo";
-import React, { useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -9,19 +7,20 @@ import {
   TouchableOpacity,
   Platform,
 } from "react-native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/context/AppContext";
-import { pickFileFromDevice } from "@/lib/filesApi";
 import { GlassCard } from "@/components/GlassCard";
 import { StatCard } from "@/components/StatCard";
 import { SecurityScore } from "@/components/SecurityScore";
 import { FileCard } from "@/components/FileCard";
 import { UserAvatar } from "@/components/UserCard";
-import { DUMMY_FILES, CURRENT_USER } from "@/data/mockData";
+import type { SecureFile } from "@/data/mockData";
+import { formatBytes, useFilesApi } from "@/lib/filesApi";
+import type { SecureFileRecord } from "@/lib/filesApi";
 
 type QuickAction = {
   icon: string;
@@ -49,15 +48,70 @@ const QUICK_ACTIONS: QuickAction[] = [
   },
 ];
 
+function toFileCard(record: SecureFileRecord): SecureFile {
+  const modified = new Date(record.modifiedAt);
+
+  return {
+    id: record.id,
+    name: record.name,
+    type: record.type,
+    size: formatBytes(record.sizeBytes),
+    encrypted: record.encrypted,
+    shared: (record.shares?.length ?? 0) > 0,
+    ownerId: record.ownerId,
+    sharedWith: record.shares?.map((share) => share.clerkId) ?? [],
+    createdAt: record.createdAt,
+    modifiedAt: Number.isNaN(modified.getTime())
+      ? record.modifiedAt
+      : modified.toLocaleDateString(),
+  };
+}
+
 export default function Home() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { currentUser, notificationCount } = useApp();
-  const recentFiles = DUMMY_FILES.slice(0, 4);
-  const encryptedCount = DUMMY_FILES.filter((f) => f.encrypted).length;
-  const sharedCount = DUMMY_FILES.filter((f) => f.shared).length;
+  const api = useFilesApi();
+  const apiRef = useRef(api);
+  apiRef.current = api;
+  const [files, setFiles] = useState<SecureFileRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [openingPicker, setOpeningPicker] = useState(false);
+  const loadFiles = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+
+    try {
+      const { owned } = await apiRef.current.listFiles();
+      setFiles(owned);
+    } catch (error) {
+      setFiles([]);
+      setLoadError(
+        error instanceof Error ? error.message : "Could not load your files.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadFiles();
+    }, [loadFiles]),
+  );
+
+  const recentFiles = [...files]
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    )
+    .slice(0, 4)
+    .map(toFileCard);
+  const encryptedCount = files.filter((file) => file.encrypted).length;
+  const sharedCount = files.filter(
+    (file) => (file.shares?.length ?? 0) > 0,
+  ).length;
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
 
@@ -68,29 +122,9 @@ export default function Home() {
    * the secure share screen, which runs the AI scan, then encryption, then
    * storage — in that order, and only proceeds while each step passes.
    */
-  const handleShare = async () => {
-    if (openingPicker) return;
-
-    setOpeningPicker(true);
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      const picked = await pickFileFromDevice();
-      if (!picked) return;
-
-      router.push({
-        pathname: "/share-file",
-        params: {
-          uri: picked.uri,
-          name: picked.name,
-          mimeType: picked.mimeType,
-          size: String(picked.size),
-        },
-      } as any);
-    } catch (error) {
-      console.error("File picker error:", error);
-    } finally {
-      setOpeningPicker(false);
-    }
+  const handleShare = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    router.push("/share-file");
   };
 
   const handleQuickAction = (action: QuickAction) => {
@@ -283,19 +317,19 @@ export default function Home() {
         <View style={styles.statsRow}>
           <StatCard
             label="Total Files"
-            value={`${DUMMY_FILES.length}`}
+            value={isLoading ? "…" : loadError ? "—" : `${files.length}`}
             icon="documents"
             color={colors.primary}
           />
           <StatCard
             label="Shared"
-            value={`${sharedCount}`}
+            value={isLoading ? "…" : loadError ? "—" : `${sharedCount}`}
             icon="share-social"
             color={colors.accent}
           />
           <StatCard
             label="Encrypted"
-            value={`${encryptedCount}`}
+            value={isLoading ? "…" : loadError ? "—" : `${encryptedCount}`}
             icon="lock-closed"
             color={colors.success}
           />
@@ -312,13 +346,32 @@ export default function Home() {
             </Text>
           </TouchableOpacity>
         </View>
-        {recentFiles.map((file) => (
-          <FileCard
-            key={file.id}
-            file={file}
-            onPress={() => router.push(`/file-details/${file.id}`)}
-          />
-        ))}
+        {isLoading ? (
+          <Text style={[styles.recentState, { color: colors.mutedForeground }]}>
+            Loading files…
+          </Text>
+        ) : loadError ? (
+          <View style={styles.recentStateWrap}>
+            <Text style={[styles.recentState, { color: colors.mutedForeground }]}>
+              Could not load recent files.
+            </Text>
+            <TouchableOpacity onPress={() => void loadFiles()}>
+              <Text style={[styles.retryText, { color: colors.primary }]}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        ) : recentFiles.length === 0 ? (
+          <Text style={[styles.recentState, { color: colors.mutedForeground }]}>
+            No files yet. Upload your first file to see it here.
+          </Text>
+        ) : (
+          recentFiles.map((file) => (
+            <FileCard
+              key={file.id}
+              file={file}
+              onPress={() => router.push(`/file-details/${file.id}`)}
+            />
+          ))
+        )}
       </ScrollView>
 
       {/* Floating Upload Button */}
@@ -441,6 +494,14 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   seeAll: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  recentState: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+    paddingVertical: 20,
+  },
+  recentStateWrap: { alignItems: "center" },
+  retryText: { fontSize: 14, fontFamily: "Inter_600SemiBold", paddingBottom: 20 },
   fab: {
     position: "absolute",
     bottom: 90,

@@ -45,6 +45,19 @@ router.post(
 
       const normalizedEmail = String(email).trim().toLowerCase();
 
+      const emailConflict = await db
+        .select()
+        .from(usersTable)
+        .where(eq(usersTable.email, normalizedEmail))
+        .limit(1);
+
+      if (emailConflict.length > 0 && emailConflict[0].clerkId !== clerkId) {
+        res.status(409).json({
+          error: "Email is already associated with another authenticated user",
+        });
+        return;
+      }
+
       // Upsert user - create if not exists, update if exists
       const existingUser = await db
         .select()

@@ -5,9 +5,9 @@ import {
   StyleSheet,
   TouchableOpacity,
   Platform,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, {
   useSharedValue,
@@ -20,44 +20,62 @@ import Animated, {
 import { useColors } from "@/hooks/useColors";
 import * as Haptics from "expo-haptics";
 import * as DocumentPicker from "expo-document-picker";
+import { scanFile, SupportedFileType } from "@/lib/scanning/scanner";
+import { encryptFileData, storeKeySecurely } from "@/lib/encryption";
+import { useAuthenticatedApi } from "@/lib/authenticatedApi";
 
 type UploadState =
-  "idle" | "selecting" | "uploading" | "encrypting" | "complete";
-
-const FILE_TYPES = [
-  { icon: "document", label: "Document", color: "#0066FF" },
-  { icon: "image", label: "Image", color: "#B44FFF" },
-  { icon: "videocam", label: "Video", color: "#FF8C00" },
-  { icon: "musical-notes", label: "Audio", color: "#00E676" },
-] as const;
+  | "idle"
+  | "selected"
+  | "analyzing"
+  | "scan_complete"
+  | "blocked"
+  | "encrypting"
+  | "encrypted"
+  | "uploading"
+  | "uploaded"
+  | "error";
 
 export default function Upload() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const api = useAuthenticatedApi();
+
   const [state, setState] = useState<UploadState>("idle");
-  const [progress, setProgress] = useState(0);
-  const [selectedType, setSelectedType] = useState<number | null>(null);
-  const [encryptionEnabled, setEncryptionEnabled] = useState(true);
+  const [selectedFile, setSelectedFile] = useState<{
+    uri: string;
+    name: string;
+    size: number;
+    mimeType?: string;
+  } | null>(null);
+
+  const [scanResult, setScanResult] = useState<{
+    verdict: string;
+    confidence: number;
+  } | null>(null);
+
+  const [errorMsg, setErrorMsg] = useState("");
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const botPad = Platform.OS === "web" ? 34 : insets.bottom;
 
   const uploadScale = useSharedValue(1);
-  const progressWidth = useSharedValue(0);
   const iconRotation = useSharedValue(0);
 
   const uploadStyle = useAnimatedStyle(() => ({
     transform: [{ scale: uploadScale.value }],
   }));
-  const progressStyle = useAnimatedStyle(() => ({
-    width: `${progressWidth.value * 100}%` as any,
-  }));
+
   const iconStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${iconRotation.value}deg` }],
   }));
 
   useEffect(() => {
-    if (state === "uploading" || state === "encrypting") {
+    if (
+      state === "analyzing" ||
+      state === "encrypting" ||
+      state === "uploading"
+    ) {
       iconRotation.value = withRepeat(
         withTiming(360, { duration: 1000, easing: Easing.linear }),
         -1,
@@ -70,107 +88,162 @@ export default function Upload() {
 
   const handleSelectFile = async () => {
     try {
-      // Haptic feedback
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-      // Button animation
       uploadScale.value = withSequence(
         withTiming(0.94, { duration: 100 }),
         withTiming(1, { duration: 100 }),
       );
 
-      // Open the real file picker
       const result = await DocumentPicker.getDocumentAsync({
         type: "*/*",
         multiple: false,
         copyToCacheDirectory: true,
       });
 
-      // User cancelled the picker
-      if (result.canceled) {
+      if (result.canceled || !result.assets?.[0]) {
         return;
       }
 
-      // A file was selected
-      const file = result.assets?.[0];
-
-      if (!file) {
-        return;
-      }
-
-      console.log("Selected file:", file);
-
-      // Now continue with your existing upload animation
-      setState("selecting");
-
-      setTimeout(() => {
-        setState("uploading");
-        simulateProgress();
-      }, 800);
+      const file = result.assets[0];
+      setSelectedFile({
+        uri: file.uri,
+        name: file.name,
+        size: file.size || 0,
+        mimeType: file.mimeType,
+      });
+      setState("selected");
     } catch (error) {
       console.error("File picker error:", error);
       setState("idle");
     }
   };
 
-  const simulateProgress = () => {
-    let p = 0;
-    const interval = setInterval(() => {
-      p += 0.04 + Math.random() * 0.04;
-      if (p >= 0.5) {
-        clearInterval(interval);
-        progressWidth.value = withTiming(0.5, { duration: 300 });
-        setProgress(50);
-        setTimeout(() => {
-          setState("encrypting");
-          simulateEncryption();
-        }, 400);
-      } else {
-        progressWidth.value = withTiming(p, { duration: 200 });
-        setProgress(Math.round(p * 100));
-      }
-    }, 180);
+  const processFile = async () => {
+    if (!selectedFile) return;
+
+    setState("analyzing");
+
+    // 1. Local AI Malware Inference
+    const result = await scanFile(
+      selectedFile.uri,
+      selectedFile.name,
+      selectedFile.size,
+      selectedFile.mimeType,
+    );
+
+    if (result.verdict === "ERROR") {
+      setErrorMsg(result.error || "Failed to scan file");
+      setState("error");
+      return;
+    }
+
+    setScanResult({ verdict: result.verdict, confidence: result.confidence });
+
+    if (result.verdict === "MALICIOUS") {
+      setState("blocked");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return; // Do NOT encrypt, do NOT upload
+    }
+
+    setState("scan_complete");
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    // Proceed to encryption
+    setTimeout(encryptAndUpload, 1500);
   };
 
-  const simulateEncryption = () => {
-    let p = 0.5;
-    const interval = setInterval(() => {
-      p += 0.03 + Math.random() * 0.03;
-      if (p >= 1) {
-        clearInterval(interval);
-        progressWidth.value = withTiming(1, { duration: 400 });
-        setProgress(100);
-        setTimeout(() => {
-          setState("complete");
+  const encryptAndUpload = async () => {
+    if (!selectedFile) return;
+
+    try {
+      setState("encrypting");
+
+      // Read plaintext file
+      const response = await fetch(selectedFile.uri);
+      const blob = await response.blob();
+      const arrayBuffer = await blob.arrayBuffer();
+      const plaintext = new Uint8Array(arrayBuffer);
+
+      // Encrypt locally
+      const { ciphertext, ivHex, keyHex } = encryptFileData(plaintext);
+
+      // Free plaintext
+      plaintext.fill(0);
+
+      setState("encrypted");
+
+      setTimeout(async () => {
+        try {
+          setState("uploading");
+
+          // Only ciphertext goes to the backend
+          const formData = new FormData();
+          formData.append("filename", selectedFile.name);
+          formData.append(
+            "mimeType",
+            selectedFile.mimeType || "application/octet-stream",
+          );
+          formData.append("iv", ivHex);
+          formData.append("malwareScanResult", scanResult?.verdict || "SAFE");
+          formData.append(
+            "malwareScanConfidence",
+            scanResult?.confidence.toString() || "0",
+          );
+
+          // Blob for ciphertext
+          const ctBlob = new Blob([new Uint8Array(ciphertext)], {
+            type: "application/octet-stream",
+          });
+          formData.append("file", ctBlob as any, "encrypted.bin");
+
+          const res = await api.request("/api/files/upload", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            throw new Error(`Upload failed: ${res.status}`);
+          }
+
+          const data = await res.json();
+
+          if (data.fileId) {
+            try {
+              // Save key locally ONLY on the device.
+              await storeKeySecurely(data.fileId, keyHex);
+            } catch (keyError) {
+              const keyMessage =
+                keyError instanceof Error
+                  ? keyError.message
+                  : "Local key storage failed";
+
+              setErrorMsg(
+                `Upload succeeded, but local key storage failed: ${keyMessage}`,
+              );
+              setState("error");
+              return;
+            }
+          }
+
+          setState("uploaded");
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }, 500);
-      } else {
-        progressWidth.value = withTiming(p, { duration: 200 });
-        setProgress(Math.round(p * 100));
-      }
-    }, 150);
+        } catch (e) {
+          const message = (e as Error).message;
+          setErrorMsg(message);
+          setState("error");
+        }
+      }, 1000);
+    } catch (error) {
+      setErrorMsg((error as Error).message);
+      setState("error");
+    }
   };
 
   const reset = () => {
     setState("idle");
-    setProgress(0);
-    progressWidth.value = 0;
-    setSelectedType(null);
-  };
-
-  const getStateLabel = (): string => {
-    switch (state) {
-      case "selecting":
-        return "Preparing file...";
-      case "uploading":
-        return `Uploading... ${progress}%`;
-      case "encrypting":
-        return `Encrypting... ${progress}%`;
-      case "complete":
-        return "Upload Complete!";
-      default:
-        return "";
-    }
+    setSelectedFile(null);
+    setScanResult(null);
+    setErrorMsg("");
   };
 
   return (
@@ -179,19 +252,12 @@ export default function Upload() {
       <View style={styles.orbBR} />
 
       <View style={[styles.header, { paddingTop: topPad + 16 }]}>
-        <Text style={[styles.title, { color: colors.foreground }]}>Upload</Text>
-        <TouchableOpacity
-          style={[
-            styles.iconBtn,
-            { backgroundColor: colors.card, borderColor: colors.border },
-          ]}
-        >
-          <Ionicons name="time-outline" size={18} color={colors.foreground} />
-        </TouchableOpacity>
+        <Text style={[styles.title, { color: colors.foreground }]}>
+          Secure Upload
+        </Text>
       </View>
 
       <View style={[styles.content, { paddingBottom: botPad + 90 }]}>
-        {/* Upload Zone */}
         <Animated.View style={uploadStyle}>
           <TouchableOpacity
             onPress={state === "idle" ? handleSelectFile : undefined}
@@ -214,13 +280,13 @@ export default function Upload() {
                   ]}
                 >
                   <Ionicons
-                    name="cloud-upload-outline"
+                    name="shield-checkmark"
                     size={52}
                     color={colors.primary}
                   />
                 </View>
                 <Text style={[styles.dropTitle, { color: colors.foreground }]}>
-                  Tap to select file
+                  Select Secure File
                 </Text>
                 <Text
                   style={[
@@ -228,14 +294,45 @@ export default function Upload() {
                     { color: colors.mutedForeground },
                   ]}
                 >
-                  PDF, DOCX, PPTX, XLSX, Images supported
+                  Local AI Scan → Local Encryption → Secure Upload
                 </Text>
               </>
             )}
 
-            {(state === "uploading" ||
+            {state === "selected" && (
+              <>
+                <View
+                  style={[
+                    styles.uploadIconBg,
+                    { backgroundColor: `${colors.primary}15` },
+                  ]}
+                >
+                  <Ionicons
+                    name="document-text"
+                    size={52}
+                    color={colors.primary}
+                  />
+                </View>
+                <Text style={[styles.dropTitle, { color: colors.foreground }]}>
+                  {selectedFile?.name}
+                </Text>
+                <TouchableOpacity
+                  onPress={processFile}
+                  style={[
+                    styles.actionBtn,
+                    { backgroundColor: colors.primary },
+                  ]}
+                >
+                  <Text style={styles.actionBtnText}>
+                    Begin Secure Analysis
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {(state === "analyzing" ||
               state === "encrypting" ||
-              state === "selecting") && (
+              state === "uploading") && (
               <>
                 <Animated.View style={iconStyle}>
                   <View
@@ -246,7 +343,11 @@ export default function Upload() {
                   >
                     <Ionicons
                       name={
-                        state === "encrypting" ? "lock-closed" : "cloud-upload"
+                        state === "analyzing"
+                          ? "analytics"
+                          : state === "encrypting"
+                            ? "lock-closed"
+                            : "cloud-upload"
                       }
                       size={52}
                       color={colors.primary}
@@ -254,43 +355,26 @@ export default function Upload() {
                   </View>
                 </Animated.View>
                 <Text style={[styles.dropTitle, { color: colors.foreground }]}>
-                  {getStateLabel()}
+                  {state === "analyzing"
+                    ? "⟳ AI malware analysis..."
+                    : state === "encrypting"
+                      ? "○ Local encryption..."
+                      : "⟳ Secure upload..."}
                 </Text>
-                <View
+                <Text
                   style={[
-                    styles.progressBar,
-                    { backgroundColor: colors.muted },
+                    styles.dropSubtitle,
+                    { color: colors.mutedForeground },
                   ]}
                 >
-                  <Animated.View
-                    style={[
-                      styles.progressFill,
-                      progressStyle,
-                      {
-                        backgroundColor:
-                          state === "encrypting"
-                            ? colors.success
-                            : colors.primary,
-                      },
-                    ]}
-                  />
-                </View>
-                {state !== "selecting" && (
-                  <Text
-                    style={[
-                      styles.progressLabel,
-                      { color: colors.mutedForeground },
-                    ]}
-                  >
-                    {state === "encrypting"
-                      ? "🔒 AES-256 encryption in progress"
-                      : "⬆ Secure transfer active"}
-                  </Text>
-                )}
+                  File remains on your device for analysis
+                </Text>
               </>
             )}
 
-            {state === "complete" && (
+            {(state === "scan_complete" ||
+              state === "encrypted" ||
+              state === "uploaded") && (
               <>
                 <View
                   style={[
@@ -299,13 +383,61 @@ export default function Upload() {
                   ]}
                 >
                   <Ionicons
-                    name="checkmark-circle"
+                    name="shield-checkmark"
                     size={52}
                     color={colors.success}
                   />
                 </View>
                 <Text style={[styles.dropTitle, { color: colors.foreground }]}>
-                  File encrypted & uploaded!
+                  {state === "scan_complete"
+                    ? "✓ AI analysis complete"
+                    : state === "encrypted"
+                      ? "✓ Encrypted locally"
+                      : "✓ Upload Complete"}
+                </Text>
+
+                {state === "scan_complete" &&
+                  scanResult?.verdict === "SAFE" && (
+                    <Text
+                      style={[styles.dropSubtitle, { color: colors.success }]}
+                    >
+                      No malicious indicators detected. Confidence:{" "}
+                      {((1 - scanResult.confidence) * 100).toFixed(1)}%
+                    </Text>
+                  )}
+
+                {state === "uploaded" && (
+                  <TouchableOpacity
+                    onPress={reset}
+                    style={[styles.resetBtn, { borderColor: colors.border }]}
+                  >
+                    <Text
+                      style={[styles.resetBtnText, { color: colors.primary }]}
+                    >
+                      Upload another file
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+
+            {state === "blocked" && (
+              <>
+                <View
+                  style={[
+                    styles.uploadIconBg,
+                    { backgroundColor: "rgba(255,59,48,0.15)" },
+                  ]}
+                >
+                  <Ionicons name="warning" size={52} color={"#FF3B30"} />
+                </View>
+                <Text style={[styles.dropTitle, { color: "#FF3B30" }]}>
+                  ⚠ SECURITY THREAT DETECTED
+                </Text>
+                <Text
+                  style={[styles.dropSubtitle, { color: colors.foreground }]}
+                >
+                  This file appears to contain malicious content.
                 </Text>
                 <Text
                   style={[
@@ -313,16 +445,61 @@ export default function Upload() {
                     { color: colors.mutedForeground },
                   ]}
                 >
-                  Your file is now protected with AES-256
+                  Confidence: {(scanResult?.confidence! * 100).toFixed(1)}%
+                </Text>
+                <Text
+                  style={[
+                    styles.dropSubtitle,
+                    { color: "#FF3B30", fontWeight: "bold", marginTop: 10 },
+                  ]}
+                >
+                  UPLOAD BLOCKED. The file was not uploaded.
                 </Text>
                 <TouchableOpacity
                   onPress={reset}
-                  style={[styles.resetBtn, { borderColor: colors.border }]}
+                  style={[
+                    styles.resetBtn,
+                    { borderColor: colors.border, marginTop: 15 },
+                  ]}
                 >
                   <Text
                     style={[styles.resetBtnText, { color: colors.primary }]}
                   >
-                    Upload another file
+                    Dismiss
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {state === "error" && (
+              <>
+                <View
+                  style={[
+                    styles.uploadIconBg,
+                    { backgroundColor: "rgba(255,59,48,0.15)" },
+                  ]}
+                >
+                  <Ionicons name="close-circle" size={52} color={"#FF3B30"} />
+                </View>
+                <Text style={[styles.dropTitle, { color: "#FF3B30" }]}>
+                  Upload Failed
+                </Text>
+                <Text
+                  style={[styles.dropSubtitle, { color: colors.foreground }]}
+                >
+                  {errorMsg}
+                </Text>
+                <TouchableOpacity
+                  onPress={reset}
+                  style={[
+                    styles.resetBtn,
+                    { borderColor: colors.border, marginTop: 15 },
+                  ]}
+                >
+                  <Text
+                    style={[styles.resetBtnText, { color: colors.primary }]}
+                  >
+                    Try Again
                   </Text>
                 </TouchableOpacity>
               </>
@@ -331,91 +508,23 @@ export default function Upload() {
         </Animated.View>
 
         {state === "idle" && (
-          <>
-            <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
-              File Type
+          <View
+            style={[
+              styles.infoBox,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}
+          >
+            <Ionicons
+              name="information-circle"
+              size={24}
+              color={colors.primary}
+            />
+            <Text style={[styles.infoText, { color: colors.mutedForeground }]}>
+              Files never leave your device unencrypted. Malware scanning occurs
+              entirely via on-device inference using locally stored JSON AI
+              models.
             </Text>
-            <View style={styles.typeRow}>
-              {FILE_TYPES.map((ft, i) => (
-                <TouchableOpacity
-                  key={ft.label}
-                  onPress={() => setSelectedType(i)}
-                  style={[
-                    styles.typeBtn,
-                    {
-                      backgroundColor:
-                        selectedType === i ? `${ft.color}18` : colors.card,
-                      borderColor:
-                        selectedType === i ? `${ft.color}60` : colors.border,
-                    },
-                  ]}
-                >
-                  <Ionicons name={ft.icon as any} size={24} color={ft.color} />
-                  <Text
-                    style={[
-                      styles.typeLabel,
-                      {
-                        color:
-                          selectedType === i
-                            ? ft.color
-                            : colors.mutedForeground,
-                      },
-                    ]}
-                  >
-                    {ft.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            <View
-              style={[
-                styles.encryptRow,
-                { backgroundColor: colors.card, borderColor: colors.border },
-              ]}
-            >
-              <View style={styles.encryptLeft}>
-                <Ionicons
-                  name="shield-checkmark"
-                  size={20}
-                  color={colors.success}
-                />
-                <View>
-                  <Text
-                    style={[styles.encryptTitle, { color: colors.foreground }]}
-                  >
-                    Encrypt File
-                  </Text>
-                  <Text
-                    style={[
-                      styles.encryptSub,
-                      { color: colors.mutedForeground },
-                    ]}
-                  >
-                    AES-256 encryption
-                  </Text>
-                </View>
-              </View>
-              <TouchableOpacity
-                onPress={() => setEncryptionEnabled((e) => !e)}
-                style={[
-                  styles.toggle,
-                  {
-                    backgroundColor: encryptionEnabled
-                      ? colors.success
-                      : colors.muted,
-                  },
-                ]}
-              >
-                <View
-                  style={[
-                    styles.toggleThumb,
-                    { transform: [{ translateX: encryptionEnabled ? 18 : 2 }] },
-                  ]}
-                />
-              </TouchableOpacity>
-            </View>
-          </>
+          </View>
         )}
       </View>
     </View>
@@ -450,20 +559,12 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
   },
   title: { fontSize: 26, fontFamily: "Inter_700Bold" },
-  iconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   content: { flex: 1, paddingHorizontal: 20, gap: 20 },
   dropZone: {
     borderWidth: 2,
     borderStyle: "dashed",
     borderRadius: 20,
-    minHeight: 220,
+    minHeight: 350,
     alignItems: "center",
     justifyContent: "center",
     gap: 16,
@@ -482,14 +583,17 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     textAlign: "center",
   },
-  progressBar: {
-    width: "100%",
-    height: 6,
-    borderRadius: 3,
-    overflow: "hidden",
+  actionBtn: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginTop: 10,
   },
-  progressFill: { height: "100%", borderRadius: 3 },
-  progressLabel: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  actionBtnText: {
+    color: "#fff",
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 16,
+  },
   resetBtn: {
     borderWidth: 1,
     borderRadius: 10,
@@ -498,33 +602,18 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   resetBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  sectionTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  typeRow: { flexDirection: "row", gap: 10 },
-  typeBtn: {
-    flex: 1,
-    alignItems: "center",
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    gap: 6,
-  },
-  typeLabel: { fontSize: 11, fontFamily: "Inter_500Medium" },
-  encryptRow: {
+  infoBox: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
     padding: 16,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
+    gap: 12,
+    alignItems: "center",
   },
-  encryptLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
-  encryptTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  encryptSub: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  toggle: { width: 44, height: 26, borderRadius: 13, justifyContent: "center" },
-  toggleThumb: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "#FFFFFF",
+  infoText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    lineHeight: 18,
   },
 });

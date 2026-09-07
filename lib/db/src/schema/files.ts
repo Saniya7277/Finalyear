@@ -101,6 +101,11 @@ export const fileSharesTable = pgTable(
       .notNull()
       .$type<SharePermission>()
       .default("viewer"),
+    recipientDeviceKeyId: uuid("recipient_device_key_id"),
+    ownerDeviceKeyId: uuid("owner_device_key_id"),
+    wrappedFileKey: text("wrapped_file_key"),
+    wrappingIv: text("wrapping_iv"),
+    wrappingAlgorithm: text("wrapping_algorithm"),
 
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
@@ -111,6 +116,20 @@ export const fileSharesTable = pgTable(
     ),
     index("file_shares_recipient_idx").on(table.sharedWithUserId),
   ],
+).enableRLS();
+
+/** Public ECDH keys only. Private device keys never leave the client. */
+export const userDeviceKeysTable = pgTable(
+  "user_device_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id").notNull().references(() => usersTable.clerkId, { onDelete: "cascade" }),
+    publicKey: text("public_key").notNull(),
+    algorithm: text("algorithm").notNull().default("ECDH-P256"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    revokedAt: timestamp("revoked_at"),
+  },
+  (table) => [index("user_device_keys_user_idx").on(table.userId)],
 ).enableRLS();
 
 // Zod schemas

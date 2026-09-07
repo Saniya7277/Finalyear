@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, Platform } from 'react-native';
-import { router } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { FileCard } from '@/components/FileCard';
-import { DUMMY_FILES, SecureFile, FileType } from '@/data/mockData';
+import { SecureFile, FileType } from '@/data/mockData';
+import { formatBytes, SecureFileRecord, useFilesApi } from '@/lib/filesApi';
 
 const FILTERS: { label: string; type: FileType | 'all' }[] = [
   { label: 'All', type: 'all' },
@@ -16,22 +17,68 @@ const FILTERS: { label: string; type: FileType | 'all' }[] = [
   { label: 'Images', type: 'image' },
 ];
 
+function toFileCard(record: SecureFileRecord): SecureFile {
+  const modified = new Date(record.modifiedAt);
+
+  return {
+    id: record.id,
+    name: record.name,
+    type: record.type,
+    size: formatBytes(record.sizeBytes),
+    encrypted: record.encrypted,
+    // This tab intentionally lists only files owned by the signed-in user.
+    // Sharing status is not part of the upload metadata returned by /api/files.
+    shared: false,
+    ownerId: record.ownerId,
+    sharedWith: [],
+    createdAt: record.createdAt,
+    modifiedAt: Number.isNaN(modified.getTime())
+      ? record.modifiedAt
+      : modified.toLocaleDateString(),
+  };
+}
+
 export default function Files() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { listFiles } = useFilesApi();
+  const listFilesRef = useRef(listFiles);
+  listFilesRef.current = listFiles;
   const [filter, setFilter] = useState<FileType | 'all'>('all');
   const [search, setSearch] = useState('');
+  const [files, setFiles] = useState<SecureFile[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
-  const filtered = DUMMY_FILES.filter(f => {
+  const loadOwnedFiles = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+
+    try {
+      const { owned } = await listFilesRef.current();
+      setFiles(owned.map(toFileCard));
+    } catch (error) {
+      setFiles([]);
+      setLoadError(error instanceof Error ? error.message : 'Could not load your files.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadOwnedFiles();
+    }, [loadOwnedFiles]),
+  );
+
+  const filtered = files.filter(f => {
     const matchType = filter === 'all' || f.type === filter;
     const matchSearch = f.name.toLowerCase().includes(search.toLowerCase());
     return matchType && matchSearch;
   });
 
-  const renderFile = ({ item }: { item: SecureFile }) => (
-    <FileCard file={item} onPress={() => router.push(`/file-details/${item.id}`)} />
-  );
+  const renderFile = ({ item }: { item: SecureFile }) => <FileCard file={item} />;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -110,8 +157,17 @@ export default function Files() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Ionicons name="documents-outline" size={48} color={colors.mutedForeground} />
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No files found</Text>
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>Try a different filter or upload your first file</Text>
+            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+              {isLoading ? 'Loading files…' : loadError ? 'Could not load files' : 'No files found'}
+            </Text>
+            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+              {loadError ?? (isLoading ? 'Fetching your encrypted file metadata' : 'Upload your first file to see it here')}
+            </Text>
+            {loadError && (
+              <TouchableOpacity onPress={() => void loadOwnedFiles()}>
+                <Text style={[styles.retryText, { color: colors.primary }]}>Try again</Text>
+              </TouchableOpacity>
+            )}
           </View>
         }
       />
@@ -137,4 +193,5 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', paddingTop: 60, gap: 12 },
   emptyTitle: { fontSize: 18, fontFamily: 'Inter_600SemiBold' },
   emptyText: { fontSize: 14, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingHorizontal: 40 },
+  retryText: { fontSize: 14, fontFamily: 'Inter_600SemiBold' },
 });

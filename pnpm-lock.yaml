@@ -172,6 +172,12 @@ importers:
       '@clerk/backend':
         specifier: ^3.16.6
         version: 3.16.6
+      '@supabase/supabase-js':
+        specifier: ^2.113.0
+        version: 2.113.0
+      '@types/multer':
+        specifier: ^2.2.0
+        version: 2.2.0
       '@workspace/api-zod':
         specifier: workspace:*
         version: link:../../lib/api-zod
@@ -212,9 +218,6 @@ importers:
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
-      '@types/multer':
-        specifier: ^2.2.0
-        version: 2.2.0
       '@types/node':
         specifier: 'catalog:'
         version: 25.9.5
@@ -421,13 +424,25 @@ importers:
     dependencies:
       '@clerk/expo':
         specifier: ^4.2.0
-        version: 4.2.8(@types/react@19.1.17)(expo-constants@18.0.13)(expo-secure-store@15.0.8(expo@54.0.36))(expo-web-browser@15.0.11(expo@54.0.36)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1)))(expo@54.0.36)(react-dom@19.1.0(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))(react@19.1.0)(typescript@5.9.3)(use-sync-external-store@1.6.0(react@19.1.0))(zod@3.25.76)
+        version: 4.2.8(@types/react@19.1.17)(expo-constants@18.0.13)(expo-crypto@15.0.9(expo@54.0.36))(expo-secure-store@15.0.8(expo@54.0.36))(expo-web-browser@15.0.11(expo@54.0.36)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1)))(expo@54.0.36)(react-dom@19.1.0(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))(react@19.1.0)(typescript@5.9.3)(use-sync-external-store@1.6.0(react@19.1.0))(zod@3.25.76)
+      '@noble/ciphers':
+        specifier: ^2.4.0
+        version: 2.4.0
+      expo-crypto:
+        specifier: ~15.0.9
+        version: 15.0.9(expo@54.0.36)
       expo-document-picker:
         specifier: ^57.0.1
         version: 57.0.1(expo@54.0.36)
+      expo-file-system:
+        specifier: ^57.0.6
+        version: 57.0.6(expo@54.0.36)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))
       expo-secure-store:
         specifier: ~15.0.8
         version: 15.0.8(expo@54.0.36)
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
     devDependencies:
       '@babel/core':
         specifier: ^7.25.2
@@ -1506,6 +1521,10 @@ packages:
   '@noble/ciphers@1.3.0':
     resolution: {integrity: sha512-2I0gnIVPtfnMw9ee9h1dJG7tp81+8Ob3OJb3Mv37rx5L40/b0i7djjCVvGOVqc9AEIQyvyu1i6ypKdFw8R8gQw==}
     engines: {node: ^14.21.3 || >=16}
+
+  '@noble/ciphers@2.4.0':
+    resolution: {integrity: sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw==}
+    engines: {node: '>= 20.19.0'}
 
   '@noble/curves@1.9.1':
     resolution: {integrity: sha512-k11yZxZg+t+gWvBbIswW0yoJlu8cHOC7dhunwOzoWH/mXGBiYyR4YY6hAEK/3EUs4UpB8la1RfdRpeGsFHkWsA==}
@@ -2885,6 +2904,38 @@ packages:
     resolution: {integrity: sha512-w8CEY73X/7tw2KKlL3iOk679V9bWseE4GzNz3zlaYxcTjmcmWOathRb0emgo/QQ3eoNzmq68+2Y2gxluAv3xGw==}
     engines: {node: '>=12.16'}
 
+  '@supabase/auth-js@2.113.0':
+    resolution: {integrity: sha512-mvHr5yeC9ZD/OY9C24Kzp6kJkpJiofs8vpszkjLP0F8CuZJ2NobI03Y2y5zzsHZ3BBx9qh9GtJLIVHKSRB7FuQ==}
+    engines: {node: '>=22.0.0'}
+
+  '@supabase/functions-js@2.113.0':
+    resolution: {integrity: sha512-4HV3PS6GIWxpcFfyDP9cMIzAoYoBG5/BKdHrVV9F28poMmL/KJEftwlYVXrFFYyNN/Hd+XsphG+8yVDDm7rjWg==}
+    engines: {node: '>=22.0.0'}
+
+  '@supabase/phoenix@0.4.5':
+    resolution: {integrity: sha512-aAn9H9ovVyeApKy11OWOrrOGq8DV68yWeH4ud2lN9fzn4aO8Zb5GLL9m1pUg9nLqIcT+ZDfAcsZe0E/nqdv2lw==}
+
+  '@supabase/postgrest-js@2.113.0':
+    resolution: {integrity: sha512-iOuWEGHSuBynebmEhO/18y2RiAbELleoH63zQA2qLiy2BatJ4FiC1nQpPvDs1JDd8MKtEFadarkrqfDUAOOdsQ==}
+    engines: {node: '>=22.0.0'}
+
+  '@supabase/realtime-js@2.113.0':
+    resolution: {integrity: sha512-tcKg+nmuQF/vjYDHcYE6WnIVhRXO7wllV0v8t18awNoQur3qYgPMnkAiECSLxgnGDjtObNYjF1ZEgM1zzrPdvg==}
+    engines: {node: '>=22.0.0'}
+
+  '@supabase/storage-js@2.113.0':
+    resolution: {integrity: sha512-dGKyqpr3aIZaGbh036q8GzlqZe04CexX9UwDJCbhADrxL4eMMHJTxj7LrzRGCn6Hm/2/2E5OEfT75YFQw+z6Pw==}
+    engines: {node: '>=22.0.0'}
+
+  '@supabase/supabase-js@2.113.0':
+    resolution: {integrity: sha512-TZgdcDLeShUmf/XpXTmEKCmIpv6mqHgyDemiBh3fxeMOYE23oYz576ArbOB3Sa0lG9yTj+ofh52IauxIKENAOw==}
+    engines: {node: '>=22.0.0'}
+    peerDependencies:
+      '@opentelemetry/api': '>=1.0.0'
+    peerDependenciesMeta:
+      '@opentelemetry/api':
+        optional: true
+
   '@swc/helpers@0.5.21':
     resolution: {integrity: sha512-jI/VAmtdjB/RnI8GTnokyX7Ug8c+g+ffD6QRLa6XQewtnGyukKkKSk3wLTM3b5cjt1jNh9x0jfVlagdN2gDKQg==}
 
@@ -4063,6 +4114,11 @@ packages:
       expo: '*'
       react-native: '*'
 
+  expo-crypto@15.0.9:
+    resolution: {integrity: sha512-SNWKa2fXx7v9gkp1h/7nqXY5XN7qgNDn3yRc2aO0gWGbeMbvob/haMxxsPFe9f51aqH5NjNCqHf2kvLhvAd8KQ==}
+    peerDependencies:
+      expo: '*'
+
   expo-document-picker@57.0.1:
     resolution: {integrity: sha512-qBwM5oxDZ3I9kwFD3pUE1oK/WNv9artoEKO6UpqhQgNRr0XA1ALRVWYjkF4+ge9lUNDRehjTm/jenINkzqg84g==}
     peerDependencies:
@@ -4070,6 +4126,12 @@ packages:
 
   expo-file-system@19.0.23:
     resolution: {integrity: sha512-MeGkid9OeNILfT/qonaXHp4f2c15xaB28U/bcN7pqZej0Kx0+6+V7e9ZIXpPHm07zVatxA+QkMTPQEGfmvVOxA==}
+    peerDependencies:
+      expo: '*'
+      react-native: '*'
+
+  expo-file-system@57.0.6:
+    resolution: {integrity: sha512-pm8PMYEW6BnVOCBJ7df9FcDmQtE1tqImuYphlfYe1ipQRLYtdCayRczJcbKIsnB3mqEyp4gC2gWmMbsAsAOjVg==}
     peerDependencies:
       expo: '*'
       react-native: '*'
@@ -4298,6 +4360,9 @@ packages:
       picomatch:
         optional: true
 
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
+
   figures@6.1.0:
     resolution: {integrity: sha512-d+l3qxjSesT4V7v2fh+QnmFnUWv9lSpjarhShNTgBOfA0ttejbQUAlHLitbjkoRiDulW0OPoQPYIGhIC8ohejg==}
     engines: {node: '>=18'}
@@ -4507,6 +4572,10 @@ packages:
 
   hyphenate-style-name@1.1.0:
     resolution: {integrity: sha512-WDC/ui2VVRrz3jOVi+XtjqkDjiVjTtFaAGiW37k6b+ohyQ5wYDOGkvCZa8+H0nx3gyvv0+BST9xuOgIyGQ00gw==}
+
+  iceberg-js@0.8.1:
+    resolution: {integrity: sha512-1dhVQZXhcHje7798IVM+xoo/1ZdVfzOMIc8/rgVSijRK38EDqOJoGula9N/8ZI5RD8QTxNQtK/Gozpr+qUqRRA==}
+    engines: {node: '>=20.0.0'}
 
   iconv-lite@0.7.3:
     resolution: {integrity: sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==}
@@ -7283,7 +7352,7 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@clerk/expo@4.2.8(@types/react@19.1.17)(expo-constants@18.0.13)(expo-secure-store@15.0.8(expo@54.0.36))(expo-web-browser@15.0.11(expo@54.0.36)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1)))(expo@54.0.36)(react-dom@19.1.0(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))(react@19.1.0)(typescript@5.9.3)(use-sync-external-store@1.6.0(react@19.1.0))(zod@3.25.76)':
+  '@clerk/expo@4.2.8(@types/react@19.1.17)(expo-constants@18.0.13)(expo-crypto@15.0.9(expo@54.0.36))(expo-secure-store@15.0.8(expo@54.0.36))(expo-web-browser@15.0.11(expo@54.0.36)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1)))(expo@54.0.36)(react-dom@19.1.0(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))(react@19.1.0)(typescript@5.9.3)(use-sync-external-store@1.6.0(react@19.1.0))(zod@3.25.76)':
     dependencies:
       '@clerk/clerk-js': 6.29.0(@types/react@19.1.17)(react-dom@19.1.0(react@19.1.0))(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))(react@19.1.0)(typescript@5.9.3)(use-sync-external-store@1.6.0(react@19.1.0))(zod@3.25.76)
       '@clerk/react': 6.14.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
@@ -7296,6 +7365,7 @@ snapshots:
       tslib: 2.8.1
     optionalDependencies:
       expo-constants: 18.0.13(expo@54.0.36)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))(supports-color@8.1.1)
+      expo-crypto: 15.0.9(expo@54.0.36)
       expo-secure-store: 15.0.8(expo@54.0.36)
       expo-web-browser: 15.0.11(expo@54.0.36)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))
       react-dom: 19.1.0(react@19.1.0)
@@ -7903,6 +7973,8 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.5.5
 
   '@noble/ciphers@1.3.0': {}
+
+  '@noble/ciphers@2.4.0': {}
 
   '@noble/curves@1.9.1':
     dependencies:
@@ -9834,6 +9906,38 @@ snapshots:
 
   '@stripe/stripe-js@5.6.0': {}
 
+  '@supabase/auth-js@2.113.0':
+    dependencies:
+      tslib: 2.8.1
+
+  '@supabase/functions-js@2.113.0':
+    dependencies:
+      tslib: 2.8.1
+
+  '@supabase/phoenix@0.4.5': {}
+
+  '@supabase/postgrest-js@2.113.0':
+    dependencies:
+      tslib: 2.8.1
+
+  '@supabase/realtime-js@2.113.0':
+    dependencies:
+      '@supabase/phoenix': 0.4.5
+      tslib: 2.8.1
+
+  '@supabase/storage-js@2.113.0':
+    dependencies:
+      iceberg-js: 0.8.1
+      tslib: 2.8.1
+
+  '@supabase/supabase-js@2.113.0':
+    dependencies:
+      '@supabase/auth-js': 2.113.0
+      '@supabase/functions-js': 2.113.0
+      '@supabase/postgrest-js': 2.113.0
+      '@supabase/realtime-js': 2.113.0
+      '@supabase/storage-js': 2.113.0
+
   '@swc/helpers@0.5.21':
     dependencies:
       tslib: 2.8.1
@@ -10991,11 +11095,21 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  expo-crypto@15.0.9(expo@54.0.36):
+    dependencies:
+      base64-js: 1.5.1
+      expo: 54.0.36(@babel/core@7.29.7(supports-color@8.1.1))(@expo/metro-runtime@6.1.2)(expo-router@6.0.24)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))(react@19.1.0)(supports-color@8.1.1)(typescript@5.9.3)
+
   expo-document-picker@57.0.1(expo@54.0.36):
     dependencies:
       expo: 54.0.36(@babel/core@7.29.7(supports-color@8.1.1))(@expo/metro-runtime@6.1.2)(expo-router@6.0.24)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))(react@19.1.0)(supports-color@8.1.1)(typescript@5.9.3)
 
   expo-file-system@19.0.23(expo@54.0.36)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1)):
+    dependencies:
+      expo: 54.0.36(@babel/core@7.29.7(supports-color@8.1.1))(@expo/metro-runtime@6.1.2)(expo-router@6.0.24)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))(react@19.1.0)(supports-color@8.1.1)(typescript@5.9.3)
+      react-native: 0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1)
+
+  expo-file-system@57.0.6(expo@54.0.36)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1)):
     dependencies:
       expo: 54.0.36(@babel/core@7.29.7(supports-color@8.1.1))(@expo/metro-runtime@6.1.2)(expo-router@6.0.24)(react-native@0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1))(react@19.1.0)(supports-color@8.1.1)(typescript@5.9.3)
       react-native: 0.81.5(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.1.17)(react@19.1.0)(supports-color@8.1.1)
@@ -11279,6 +11393,8 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.5
 
+  fflate@0.8.3: {}
+
   figures@6.1.0:
     dependencies:
       is-unicode-supported: 2.1.0
@@ -11499,6 +11615,8 @@ snapshots:
   human-signals@8.0.1: {}
 
   hyphenate-style-name@1.1.0: {}
+
+  iceberg-js@0.8.1: {}
 
   iconv-lite@0.7.3:
     dependencies:

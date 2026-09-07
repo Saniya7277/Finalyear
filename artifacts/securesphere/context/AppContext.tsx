@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, ReactNode } from
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth, useClerk, useUser } from '@clerk/expo';
 import { CURRENT_USER, User } from '@/data/mockData';
+import { ensureDeviceKey } from '@/lib/deviceKeys';
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000';
 
@@ -96,6 +97,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
 
         if (response.ok) {
+          const { publicKey } = await ensureDeviceKey(user.id);
+          const keyResponse = await fetch(`${API_BASE_URL}/api/keys/register`, {
+            method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ publicKey: JSON.stringify(publicKey) }),
+          });
+          if (!keyResponse.ok) throw new Error('Device key registration failed');
           setIsProfileSynced(true);
         } else {
           console.warn('Profile sync failed with status', response.status);

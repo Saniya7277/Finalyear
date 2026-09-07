@@ -6,13 +6,14 @@ import {
   teammatesTable,
   filesTable,
   fileSharesTable,
+  userDeviceKeysTable,
   type ScanVerdict,
   type SharePermission,
 } from "@workspace/db";
-import { eq, and, inArray, desc } from "drizzle-orm";
+import { eq, and, inArray, desc, isNull } from "drizzle-orm";
 import { requireAuth, getClerkId } from "../middlewares/auth";
 import { scanFile } from "../lib/spamScanner";
-import { encryptToBlob, decryptBlob, isEncryptionConfigured } from "../lib/encryption";
+import { encryptToBlob, isEncryptionConfigured } from "../lib/encryption";
 import {
   buildObjectPath,
   uploadEncryptedObject,
@@ -140,6 +141,118 @@ function paramId(req: Request): string {
   const value = req.params.id;
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 }
+
+router.post(
+  "/upload",
+  acceptUpload,
+  async (req: Request, res: Response): Promise<void> => {
+    let uploadedPath: string | null = null;
+
+    try {
+      const clerkId = getClerkId(req);
+      const file = req.file;
+      const filename =
+        typeof req.body?.filename === "string" && req.body.filename.trim()
+          ? req.body.filename.trim()
+          : file?.originalname || "untitled";
+      const mimeType =
+        typeof req.body?.mimeType === "string" && req.body.mimeType.trim()
+          ? req.body.mimeType.trim()
+          : "application/octet-stream";
+      const iv = typeof req.body?.iv === "string" ? req.body.iv.trim() : "";
+      const scanResult =
+        typeof req.body?.malwareScanResult === "string"
+          ? req.body.malwareScanResult.trim().toUpperCase()
+          : "";
+      const confidence = Number(req.body?.malwareScanConfidence ?? 0);
+
+      if (!file) {
+        res.status(400).json({ error: "No file was uploaded." });
+        return;
+      }
+
+      if (file.size === 0) {
+        res.status(400).json({ error: "The encrypted file is empty." });
+        return;
+      }
+
+      if (!/^[0-9a-fA-F]{24}$/.test(iv)) {
+        res
+          .status(400)
+          .json({ error: "A valid 12-byte encryption IV is required." });
+        return;
+      }
+
+      if (
+        scanResult !== "SAFE" ||
+        !Number.isFinite(confidence) ||
+        confidence < 0 ||
+        confidence > 1
+      ) {
+        res
+          .status(422)
+          .json({ error: "The file did not pass the local security scan." });
+        return;
+      }
+
+      const user = await requireUserRow(clerkId);
+      if (!user) {
+        res.status(404).json({
+          error: "User profile not found. Sign out and back in to sync it.",
+        });
+        return;
+      }
+
+      if (!isStorageConfigured()) {
+        res.status(503).json({
+          error:
+            "Supabase Storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.",
+        });
+        return;
+      }
+
+      const objectPath = buildObjectPath(clerkId);
+      await uploadEncryptedObject(objectPath, file.buffer);
+      uploadedPath = objectPath;
+
+      const [stored] = await db
+        .insert(filesTable)
+        .values({
+          ownerClerkId: clerkId,
+          filename,
+          mimeType,
+          sizeBytes: file.size,
+          supabasePath: objectPath,
+          iv: iv.toLowerCase(),
+          encrypted: true,
+          malwareScanResult: "clean",
+          malwareScanConfidence: confidence,
+        })
+        .returning(fileColumns);
+
+      uploadedPath = null;
+      res.status(201).json({
+        success: true,
+        fileId: stored.id,
+        file: toFileResponse(stored),
+      });
+    } catch (error) {
+      if (uploadedPath) {
+        await deleteEncryptedObject(uploadedPath).catch((cleanupError) => {
+          logger.error(
+            { err: cleanupError, path: uploadedPath },
+            "Failed to clean up orphaned encrypted object",
+          );
+        });
+      }
+
+      logger.error({ err: error }, "Encrypted upload failed");
+      res
+        .status(500)
+        .json({ error: "Failed to store the encrypted file securely." });
+    }
+  },
+);
 
 /** Look up the caller's user row; every file operation is scoped to it. */
 async function requireUserRow(clerkId: string) {
@@ -388,16 +501,52 @@ router.get("/", async (req: Request, res: Response): Promise<void> => {
       .where(eq(filesTable.ownerClerkId, clerkId))
       .orderBy(desc(filesTable.createdAt));
 
+    const ownedShares = await db
+      .select({
+        fileId: fileSharesTable.fileId,
+        clerkId: usersTable.clerkId,
+        name: usersTable.name,
+        email: usersTable.email,
+        permission: fileSharesTable.permission,
+        createdAt: fileSharesTable.createdAt,
+      })
+      .from(fileSharesTable)
+      .innerJoin(usersTable, eq(usersTable.clerkId, fileSharesTable.sharedWithUserId))
+      .innerJoin(filesTable, eq(filesTable.id, fileSharesTable.fileId))
+      .where(eq(filesTable.ownerClerkId, clerkId));
+
     const sharedWithMe = await db
-      .select(fileColumns)
+      .select({
+        ...fileColumns,
+        sharedById: usersTable.clerkId,
+        sharedByName: usersTable.name,
+        sharedByEmail: usersTable.email,
+        permission: fileSharesTable.permission,
+        sharedAt: fileSharesTable.createdAt,
+      })
       .from(fileSharesTable)
       .innerJoin(filesTable, eq(filesTable.id, fileSharesTable.fileId))
+      .innerJoin(usersTable, eq(usersTable.clerkId, fileSharesTable.sharedByUserId))
       .where(eq(fileSharesTable.sharedWithUserId, clerkId))
       .orderBy(desc(filesTable.createdAt));
 
     res.json({
-      owned: owned.map(toFileResponse),
-      sharedWithMe: sharedWithMe.map(toFileResponse),
+      owned: owned.map((file) => ({
+        ...toFileResponse(file),
+        shares: ownedShares
+          .filter((share) => share.fileId === file.id)
+          .map(({ fileId: _fileId, ...share }) => share),
+      })),
+      sharedWithMe: sharedWithMe.map((file) => ({
+        ...toFileResponse(file),
+        permission: file.permission,
+        sharedAt: file.sharedAt,
+        sharedBy: {
+          clerkId: file.sharedById,
+          name: file.sharedByName,
+          email: file.sharedByEmail,
+        },
+      })),
     });
     return;
   } catch (error) {
@@ -492,6 +641,22 @@ router.get("/:id", async (req: Request, res: Response): Promise<void> => {
  * returning corrupted bytes.
  */
 router.get(
+  "/:id/key-share",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const clerkId = getClerkId(req);
+      const [share] = await db.select().from(fileSharesTable).where(and(eq(fileSharesTable.fileId, paramId(req)), eq(fileSharesTable.sharedWithUserId, clerkId))).limit(1);
+      if (!share || !share.wrappedFileKey || !share.wrappingIv || !share.ownerDeviceKeyId) { res.status(404).json({ error: "No usable secure share was found." }); return; }
+      const [ownerKey] = await db.select({ publicKey: userDeviceKeysTable.publicKey }).from(userDeviceKeysTable).where(eq(userDeviceKeysTable.id, share.ownerDeviceKeyId)).limit(1);
+      if (!ownerKey) { res.status(409).json({ error: "Owner device key is unavailable." }); return; }
+      const [file] = await db.select({ iv: filesTable.iv }).from(filesTable).where(eq(filesTable.id, share.fileId)).limit(1);
+      if (!file?.iv) { res.status(409).json({ error: "File encryption metadata is unavailable." }); return; }
+      res.json({ wrappedFileKey: share.wrappedFileKey, wrappingIv: share.wrappingIv, wrappingAlgorithm: share.wrappingAlgorithm, ownerPublicKey: ownerKey.publicKey, ownerDeviceKeyId: share.ownerDeviceKeyId, recipientDeviceKeyId: share.recipientDeviceKeyId, fileIv: file.iv });
+    } catch (error) { logger.error({ err: error }, "Failed to load secure share key"); res.status(500).json({ error: "Failed to load secure share key." }); }
+  },
+);
+
+router.get(
   "/:id/content",
   async (req: Request, res: Response): Promise<void> => {
     try {
@@ -515,28 +680,15 @@ router.get(
         return;
       }
 
-      let plainText: Buffer;
-      try {
-        plainText = decryptBlob(cipherBlob, file.iv);
-      } catch (error) {
-        logger.error({ err: error, fileId: file.id }, "Decryption failed");
-        res.status(500).json({
-          error:
-            "This file could not be decrypted. It may have been tampered with, or the encryption key changed.",
-        });
-        return;
-      }
-
-      res.setHeader(
-        "Content-Type",
-        file.mimeType ?? "application/octet-stream",
-      );
+      // The API only authorizes and proxies opaque ciphertext. Decryption is
+      // exclusively client-side, using the device-local key material.
+      res.setHeader("Content-Type", "application/octet-stream");
       res.setHeader("Cache-Control", "no-store");
       res.setHeader(
         "Content-Disposition",
         `attachment; filename="${encodeURIComponent(file.filename)}"`,
       );
-      res.send(plainText);
+      res.send(cipherBlob);
       return;
     } catch (error) {
       logger.error({ err: error }, "Failed to read file content");
@@ -550,66 +702,63 @@ router.get(
  * POST /api/files/:id/share
  * Share an already-stored file with more teammates.
  */
-router.post("/:id/share", async (req: Request, res: Response): Promise<void> => {
-  try {
-    const clerkId = getClerkId(req);
-    const rows = await db
-      .select()
-      .from(filesTable)
-      .where(
-        and(
-          eq(filesTable.id, paramId(req)),
-          eq(filesTable.ownerClerkId, clerkId),
-        ),
-      )
-      .limit(1);
+router.post(
+  "/:id/share",
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const clerkId = getClerkId(req);
+      const rows = await db
+        .select()
+        .from(filesTable)
+        .where(
+          and(
+            eq(filesTable.id, paramId(req)),
+            eq(filesTable.ownerClerkId, clerkId),
+          ),
+        )
+        .limit(1);
 
-    if (!rows.length) {
-      res.status(404).json({ error: "File not found." });
+      if (!rows.length) {
+        res.status(404).json({ error: "File not found." });
+        return;
+      }
+
+      const { recipientId, recipientDeviceKeyId, ownerDeviceKeyId, wrappedFileKey, wrappingIv, wrappingAlgorithm } = req.body ?? {};
+      const permission: SharePermission =
+        req.body?.permission === "editor" ? "editor" : "viewer";
+
+      if (![recipientId, recipientDeviceKeyId, ownerDeviceKeyId, wrappedFileKey, wrappingIv, wrappingAlgorithm].every(v => typeof v === "string" && v.length > 0)) {
+        res.status(400).json({ error: "Wrapped-key sharing metadata is required." });
+        return;
+      }
+      const recipientIds = await filterToTeammates(clerkId, [recipientId]);
+      if (!recipientIds.length) {
+        res.status(403).json({ error: "Recipient is not an authorized teammate." });
+        return;
+      }
+      const [recipientKey] = await db.select().from(userDeviceKeysTable).where(and(eq(userDeviceKeysTable.id, recipientDeviceKeyId), eq(userDeviceKeysTable.userId, recipientId), isNull(userDeviceKeysTable.revokedAt))).limit(1);
+      const [ownerKey] = await db.select().from(userDeviceKeysTable).where(and(eq(userDeviceKeysTable.id, ownerDeviceKeyId), eq(userDeviceKeysTable.userId, clerkId), isNull(userDeviceKeysTable.revokedAt))).limit(1);
+      if (!recipientKey || !ownerKey) { res.status(409).json({ error: "An active device key is required for both users." }); return; }
+
+      await db
+        .insert(fileSharesTable)
+        .values(
+          [{ fileId: rows[0].id, sharedWithUserId: recipientId,
+            sharedByUserId: clerkId,
+            permission,
+            recipientDeviceKeyId, ownerDeviceKeyId, wrappedFileKey, wrappingIv, wrappingAlgorithm }],
+        )
+        .onConflictDoUpdate({ target: [fileSharesTable.fileId, fileSharesTable.sharedWithUserId], set: { recipientDeviceKeyId, ownerDeviceKeyId, wrappedFileKey, wrappingIv, wrappingAlgorithm } });
+
+      res.json({ success: true, sharedWith: recipientIds });
+      return;
+    } catch (error) {
+      logger.error({ err: error }, "Failed to share file");
+      res.status(500).json({ error: "Failed to share the file." });
       return;
     }
-
-    const { teammateIds } = req.body ?? {};
-    const permission: SharePermission =
-      req.body?.permission === "editor" ? "editor" : "viewer";
-
-    if (!Array.isArray(teammateIds) || teammateIds.length === 0) {
-      res.status(400).json({ error: "teammateIds must be a non-empty array." });
-      return;
-    }
-
-    const recipientIds = await filterToTeammates(
-      clerkId,
-      teammateIds.filter((id: unknown): id is string => typeof id === "string"),
-    );
-
-    if (recipientIds.length === 0) {
-      res.status(400).json({
-        error: "None of the selected people are your teammates yet.",
-      });
-      return;
-    }
-
-    await db
-      .insert(fileSharesTable)
-      .values(
-        recipientIds.map((recipientId) => ({
-          fileId: rows[0].id,
-          sharedWithUserId: recipientId,
-          sharedByUserId: clerkId,
-          permission,
-        })),
-      )
-      .onConflictDoNothing();
-
-    res.json({ success: true, sharedWith: recipientIds });
-    return;
-  } catch (error) {
-    logger.error({ err: error }, "Failed to share file");
-    res.status(500).json({ error: "Failed to share the file." });
-    return;
-  }
-});
+  },
+);
 
 /**
  * DELETE /api/files/:id
