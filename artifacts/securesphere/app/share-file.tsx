@@ -45,15 +45,20 @@ export default function ShareFile() {
       const fileKey = await retrieveKeySecurely(fileId);
       if (!fileKey) throw new Error("This file’s local encryption key is unavailable on this device. It cannot be shared from here.");
       setProgress("fetching");
-      const [ownerKey, recipientKey] = await Promise.all([api.getMyDeviceKey(), api.getTeammateDeviceKey(teammateId)]);
+      const [ownerKey, recipientKeys] = await Promise.all([api.getMyDeviceKey(), api.getTeammateDeviceKeys(teammateId)]);
+      if (!recipientKeys.length) {
+        throw new Error("Recipient device key unavailable: this teammate has no active device keys.");
+      }
       setProgress("wrapping");
-      const wrapped = await wrapFileKey(user.id, recipientKey.publicKey as JsonWebKey, fileId, fileKey);
+      const recipientDeviceKeys = await Promise.all(recipientKeys.map(async (recipientKey) => ({
+        recipientDeviceKeyId: recipientKey.id,
+        ...(await wrapFileKey(user.id, recipientKey.publicKey as JsonWebKey, fileId, fileKey)),
+      })));
       setProgress("creating");
       await api.createSecureShare(fileId, {
         recipientId: teammateId,
-        recipientDeviceKeyId: recipientKey.id,
         ownerDeviceKeyId: ownerKey.id,
-        ...wrapped,
+        recipientDeviceKeys,
       });
       setProgress("done");
       setMessage("Share successful. The encrypted file was not uploaded again.");

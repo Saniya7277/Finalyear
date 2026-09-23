@@ -56,3 +56,5 @@ Thumbs.db
 # Python virtual environments
 .venv/
 __pycache__/
+.vercel
+.env*

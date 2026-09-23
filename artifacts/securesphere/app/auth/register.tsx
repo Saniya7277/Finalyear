@@ -11,7 +11,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,10 +20,12 @@ import * as Haptics from 'expo-haptics';
 import { formatClerkError } from '@/utils/authErrors';
 import { validatePassword, validateConfirmPassword } from '@/utils/passwordValidation';
 import { PasswordRequirements } from '@/components/PasswordRequirements';
+import { resolvePostAuthRoute } from '@/lib/pendingInvitation';
 
 export default function Register() {
   const { signUp } = useSignUp();
   const { setActive } = useClerk();
+  const { invitationToken } = useLocalSearchParams<{ invitationToken?: string }>();
   const insets = useSafeAreaInsets();
 
   const [name, setName] = useState('');
@@ -168,7 +170,7 @@ export default function Register() {
         });
       }
 
-      router.replace('/(tabs)/home');
+      router.replace((await resolvePostAuthRoute(invitationToken)) as any);
     } catch (err: any) {
       console.error('VERIFY UNHANDLED ERROR:', err);
       const parsed = formatClerkError(err, 'Verification Failed');
@@ -495,7 +497,12 @@ export default function Register() {
 
               <TouchableOpacity
                 style={styles.loginRow}
-                onPress={() => router.push('/auth/login')}
+                onPress={() =>
+                  router.push({
+                    pathname: '/auth/login',
+                    params: invitationToken ? { invitationToken } : {},
+                  })
+                }
                 disabled={loading}
               >
                 <Text style={styles.loginText}>Already have an account? </Text>

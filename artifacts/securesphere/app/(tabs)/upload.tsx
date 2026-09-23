@@ -20,7 +20,9 @@ import Animated, {
 import { useColors } from "@/hooks/useColors";
 import * as Haptics from "expo-haptics";
 import * as DocumentPicker from "expo-document-picker";
-import { scanFile, SupportedFileType } from "@/lib/scanning/scanner";
+import { File, Paths } from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
+import { readFileBytes, scanFile, SupportedFileType } from "@/lib/scanning/scanner";
 import { encryptFileData, storeKeySecurely } from "@/lib/encryption";
 import { useAuthenticatedApi } from "@/lib/authenticatedApi";
 
@@ -158,87 +160,158 @@ export default function Upload() {
     try {
       setState("encrypting");
 
-      // Read plaintext file
-      const response = await fetch(selectedFile.uri);
-      const blob = await response.blob();
-      const arrayBuffer = await blob.arrayBuffer();
-      const plaintext = new Uint8Array(arrayBuffer);
+      // This existing helper reads locally with the browser API on web and
+      // Expo FileSystem on native platforms. It never uploads plaintext.
+      const plaintext = await readFileBytes(selectedFile.uri);
 
-      // Encrypt locally
+      // Encrypt locally. Plaintext never leaves the device.
       const { ciphertext, ivHex, keyHex } = encryptFileData(plaintext);
+      const ciphertextSize = ciphertext.byteLength;
 
-      // Free plaintext
       plaintext.fill(0);
-
       setState("encrypted");
 
-      setTimeout(async () => {
-        try {
-          setState("uploading");
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
-          // Only ciphertext goes to the backend
-          const formData = new FormData();
-          formData.append("filename", selectedFile.name);
-          formData.append(
-            "mimeType",
-            selectedFile.mimeType || "application/octet-stream",
+      setState("uploading");
+
+      // Step 1: Ask Vercel only for a signed Supabase upload URL.
+      const urlResponse = await api.request("/api/files/upload-url", {
+        method: "POST",
+        body: JSON.stringify({
+          filename: selectedFile.name,
+        }),
+      });
+
+      if (!urlResponse.ok) {
+        const detail = await urlResponse.text().catch(() => "");
+        throw new Error(
+          `Failed to prepare secure upload: ${urlResponse.status}${detail ? ` - ${detail}` : ""}`,
+        );
+      }
+
+      const uploadInfo = await urlResponse.json();
+
+      if (!uploadInfo.signedUrl || !uploadInfo.path) {
+        throw new Error("Server did not return a valid secure upload URL.");
+      }
+
+      // Step 2: Upload ONLY ciphertext directly to Supabase Storage.
+      if (Platform.OS === "web") {
+        // Browsers support Blob construction from typed arrays.
+        const webCiphertext = new Uint8Array(ciphertext.byteLength);
+        webCiphertext.set(ciphertext);
+        const ciphertextBlob = new Blob([webCiphertext.buffer], {
+          type: "application/octet-stream",
+        });
+        webCiphertext.fill(0);
+        ciphertext.fill(0);
+
+        const storageResponse = await fetch(uploadInfo.signedUrl, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "x-upsert": "false",
+          },
+          body: ciphertextBlob,
+        });
+
+        if (!storageResponse.ok) {
+          const detail = await storageResponse.text().catch(() => "");
+          throw new Error(
+            `Secure Storage upload failed: ${storageResponse.status}${detail ? ` - ${detail}` : ""}`,
           );
-          formData.append("iv", ivHex);
-          formData.append("malwareScanResult", scanResult?.verdict || "SAFE");
-          formData.append(
-            "malwareScanConfidence",
-            scanResult?.confidence.toString() || "0",
-          );
-
-          // Blob for ciphertext
-          const ctBlob = new Blob([new Uint8Array(ciphertext)], {
-            type: "application/octet-stream",
-          });
-          formData.append("file", ctBlob as any, "encrypted.bin");
-
-          const res = await api.request("/api/files/upload", {
-            method: "POST",
-            body: formData,
-          });
-
-          if (!res.ok) {
-            throw new Error(`Upload failed: ${res.status}`);
-          }
-
-          const data = await res.json();
-
-          if (data.fileId) {
-            try {
-              // Save key locally ONLY on the device.
-              await storeKeySecurely(data.fileId, keyHex);
-            } catch (keyError) {
-              const keyMessage =
-                keyError instanceof Error
-                  ? keyError.message
-                  : "Local key storage failed";
-
-              setErrorMsg(
-                `Upload succeeded, but local key storage failed: ${keyMessage}`,
-              );
-              setState("error");
-              return;
-            }
-          }
-
-          setState("uploaded");
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        } catch (e) {
-          const message = (e as Error).message;
-          setErrorMsg(message);
-          setState("error");
         }
-      }, 1000);
+      } else {
+        // React Native does not support Blob(ArrayBufferView). Write the
+        // ciphertext to the app cache and let Expo's native uploader send the
+        // file URI as a raw PUT body instead.
+        const ciphertextFile = new File(
+          Paths.cache,
+          `securesphere-upload-${Date.now()}.enc`,
+        );
+
+        try {
+          ciphertextFile.write(ciphertext);
+          ciphertext.fill(0);
+
+          const storageResponse = await FileSystem.uploadAsync(
+            uploadInfo.signedUrl,
+            ciphertextFile.uri,
+            {
+              httpMethod: "PUT",
+              uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+              headers: {
+                "Content-Type": "application/octet-stream",
+                "x-upsert": "false",
+              },
+            },
+          );
+
+          if (storageResponse.status < 200 || storageResponse.status >= 300) {
+            throw new Error(
+              `Secure Storage upload failed: ${storageResponse.status}${storageResponse.body ? ` - ${storageResponse.body}` : ""}`,
+            );
+          }
+        } finally {
+          if (ciphertextFile.exists) {
+            ciphertextFile.delete();
+          }
+        }
+      }
+
+      // Step 3: Tell Vercel only the small metadata needed for the DB record.
+      const completeResponse = await api.request("/api/files/complete-upload", {
+        method: "POST",
+        body: JSON.stringify({
+          path: uploadInfo.path,
+          filename: selectedFile.name,
+          mimeType: selectedFile.mimeType || "application/octet-stream",
+          size: ciphertextSize,
+          iv: ivHex,
+          malwareScanResult: scanResult?.verdict || "SAFE",
+          malwareScanConfidence: scanResult?.confidence ?? 0,
+        }),
+      });
+
+      if (!completeResponse.ok) {
+        const detail = await completeResponse.text().catch(() => "");
+        throw new Error(
+          `Upload completion failed: ${completeResponse.status}${detail ? ` - ${detail}` : ""}`,
+        );
+      }
+
+      const data = await completeResponse.json();
+
+      if (!data.fileId) {
+        throw new Error("Upload completed but no file ID was returned.");
+      }
+
+      // Step 4: AES key stays ONLY on this device.
+      try {
+        await storeKeySecurely(data.fileId, keyHex);
+      } catch (keyError) {
+        const keyMessage =
+          keyError instanceof Error
+            ? keyError.message
+            : "Local key storage failed";
+
+        setErrorMsg(
+          `Upload succeeded, but local key storage failed: ${keyMessage}`,
+        );
+        setState("error");
+        return;
+      }
+
+      setState("uploaded");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
-      setErrorMsg((error as Error).message);
+      setErrorMsg(
+        error instanceof Error ? error.message : "Secure upload failed",
+      );
       setState("error");
     }
   };
-
   const reset = () => {
     setState("idle");
     setSelectedFile(null);

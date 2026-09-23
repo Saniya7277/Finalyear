@@ -1,44 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 /**
- * Holds an invitation token across a sign-in.
- *
- * Invitation links arrive by email, so the person opening one is often signed
- * out - or signed into the wrong account. The accept screen parks the token
- * here, sends them to sign in, and the auth flow picks it back up afterwards
- * instead of dropping them on the home screen with the invitation forgotten.
+ * Clears a legacy pending invitation token. Invitation continuation is carried
+ * explicitly in the auth route's `invitationToken` parameter instead of being
+ * restored from storage after unrelated future logins.
  */
 const KEY = "pendingInvitationToken";
-
-export async function savePendingInvitation(token: string): Promise<void> {
-  try {
-    await AsyncStorage.setItem(KEY, token);
-  } catch (err) {
-    console.warn("Could not store the pending invitation:", err);
-  }
-}
-
-/** Read without clearing - use when you only need to know one exists. */
-export async function peekPendingInvitation(): Promise<string | null> {
-  try {
-    return await AsyncStorage.getItem(KEY);
-  } catch {
-    return null;
-  }
-}
-
-/** Read and clear, so a consumed invitation is not replayed on the next launch. */
-export async function takePendingInvitation(): Promise<string | null> {
-  try {
-    const token = await AsyncStorage.getItem(KEY);
-    if (token) {
-      await AsyncStorage.removeItem(KEY);
-    }
-    return token;
-  } catch {
-    return null;
-  }
-}
 
 export async function clearPendingInvitation(): Promise<void> {
   try {
@@ -49,10 +16,15 @@ export async function clearPendingInvitation(): Promise<void> {
 }
 
 /**
- * Where to send someone once they are authenticated: back to a waiting
- * invitation if there is one, otherwise the normal landing screen.
+ * Continue an invitation only when the current auth navigation explicitly
+ * carries a valid token. Normal logins always go Home, and clearing the legacy
+ * key here prevents a previously abandoned token from being replayed.
  */
-export async function resolvePostAuthRoute(): Promise<string> {
-  const token = await peekPendingInvitation();
-  return token ? `/accept-invitation/${token}` : "/(tabs)/home";
+export async function resolvePostAuthRoute(
+  invitationToken?: string,
+): Promise<string> {
+  await clearPendingInvitation();
+  return /^[a-f0-9]{64}$/i.test(invitationToken ?? "")
+    ? `/accept-invitation/${invitationToken}`
+    : "/(tabs)/home";
 }

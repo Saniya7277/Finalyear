@@ -98,32 +98,70 @@ function objectUrl(config: StorageConfig, path: string): string {
  * what the plaintext is, and the object is opaque bytes as far as Supabase is
  * concerned.
  */
-export async function uploadEncryptedObject(
+export async function createSignedUploadUrl(
   path: string,
-  blob: Buffer,
-): Promise<void> {
+): Promise<{ token: string; path: string; signedUrl: string }> {
   const config = getStorageConfig();
+  const encodedPath = path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 
-  const response = await fetch(objectUrl(config, path), {
-    method: "POST",
-    headers: {
-      ...authHeaders(config),
-      "Content-Type": "application/octet-stream",
-      "Cache-Control": "no-store",
-      // Refuse to silently overwrite an existing object.
-      "x-upsert": "false",
+  const response = await fetch(
+    `${config.url}/storage/v1/object/upload/sign/${encodeURIComponent(config.bucket)}/${encodedPath}`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(config),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
     },
-    body: new Uint8Array(blob),
-  });
+  );
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     throw new Error(
-      `Supabase Storage upload failed (${response.status}). ${detail}`.trim(),
+      `Supabase signed upload URL creation failed (${response.status}). ${detail}`.trim(),
     );
   }
-}
 
+  const data = (await response.json()) as {
+    token?: string;
+    path?: string;
+    url?: string;
+  };
+
+  const returnedPath = data.path || path;
+  let token = data.token || "";
+  let signedUrl = data.url || "";
+
+  if (signedUrl && !signedUrl.startsWith("http")) {
+    signedUrl = `${config.url}/storage/v1${signedUrl.startsWith("/") ? "" : "/"}${signedUrl}`;
+  }
+
+  if (!token && signedUrl) {
+    try {
+      token = new URL(signedUrl).searchParams.get("token") || "";
+    } catch {
+      // Fall through to the validation below.
+    }
+  }
+
+  if (!signedUrl && token) {
+    signedUrl = `${config.url}/storage/v1/object/upload/sign/${encodeURIComponent(config.bucket)}/${encodedPath}?token=${encodeURIComponent(token)}`;
+  }
+
+  if (!token || !signedUrl) {
+    throw new Error("Supabase did not return a usable signed upload URL.");
+  }
+
+  return {
+    token,
+    path: returnedPath,
+    signedUrl,
+  };
+}
 /** Download an encrypted blob. The caller decrypts; this returns raw ciphertext. */
 export async function downloadEncryptedObject(path: string): Promise<Buffer> {
   const config = getStorageConfig();

@@ -80,14 +80,15 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="profile"
+        name="search"
         options={{
-          title: "Profile",
+          title: "Search",
           tabBarIcon: ({ color }) => (
-            <Feather name="user" size={22} color={color} />
+            <Feather name="search" size={22} color={color} />
           ),
         }}
       />
+      <Tabs.Screen name="profile" options={{ href: null }} />
       {/* Hide the legacy redirect index tab */}
       <Tabs.Screen name="index" options={{ href: null }} />
     </Tabs>

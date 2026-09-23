@@ -1,103 +1,26 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import { useColors } from '@/hooks/useColors';
-import { SecureFile, FileType } from '@/data/mockData';
+import React from "react";
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
+import { useColors } from "@/hooks/useColors";
+import { SecureFile, FileType } from "@/data/mockData";
 
 function getFileIcon(type: FileType): { name: string; color: string } {
   switch (type) {
-    case 'pdf': return { name: 'file-pdf-box', color: '#FF3B5C' };
-    case 'docx': return { name: 'file-word', color: '#0066FF' };
-    case 'pptx': return { name: 'file-powerpoint', color: '#FF8C00' };
-    case 'xlsx': return { name: 'file-excel', color: '#00E676' };
-    case 'image': return { name: 'file-image', color: '#B44FFF' };
-    default: return { name: 'file-document', color: '#7A9BB5' };
+    case "pdf": return { name: "file-pdf-box", color: "#FF5C6C" };
+    case "docx": return { name: "file-word", color: "#19D3F3" };
+    case "pptx": return { name: "file-powerpoint", color: "#FFB547" };
+    case "xlsx": return { name: "file-excel", color: "#21E6A5" };
+    case "image": return { name: "file-image", color: "#A855F7" };
+    default: return { name: "file-document", color: "#8EA6BC" };
   }
 }
 
-interface FileCardProps {
-  file: SecureFile;
-  onPress?: () => void;
+export function FileCard({ file, onPress }: { file: SecureFile; onPress?: () => void }) {
+  const colors = useColors(); const icon = getFileIcon(file.type);
+  return <TouchableOpacity activeOpacity={0.72} onPress={onPress} style={[styles.row, { borderBottomColor: colors.border }]}>
+    <View style={[styles.iconBox, { backgroundColor: `${icon.color}18` }]}><MaterialCommunityIcons name={icon.name as any} size={25} color={icon.color} /></View>
+    <View style={styles.info}><Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>{file.name}</Text><Text style={[styles.meta, { color: colors.mutedForeground }]} numberOfLines={1}>{file.type.toUpperCase()} · {file.size} · {file.modifiedAt}</Text></View>
+    <View style={styles.badges}>{file.encrypted && <View style={[styles.badge, { backgroundColor: "rgba(25,211,243,0.10)", borderColor: "rgba(25,211,243,0.22)" }]}><Ionicons name="lock-closed" size={10} color={colors.primary} /></View>}{file.shared && <View style={[styles.badge, { backgroundColor: "rgba(142,166,188,0.10)", borderColor: "rgba(142,166,188,0.2)" }]}><Ionicons name="people" size={10} color={colors.mutedForeground} /></View>}</View>
+  </TouchableOpacity>;
 }
-
-export function FileCard({ file, onPress }: FileCardProps) {
-  const colors = useColors();
-  const icon = getFileIcon(file.type);
-
-  return (
-    <TouchableOpacity
-      activeOpacity={0.75}
-      onPress={onPress}
-      style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
-    >
-      <View style={[styles.iconBox, { backgroundColor: `${icon.color}18` }]}>
-        <MaterialCommunityIcons name={icon.name as any} size={28} color={icon.color} />
-      </View>
-
-      <View style={styles.info}>
-        <Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>
-          {file.name}
-        </Text>
-        <Text style={[styles.meta, { color: colors.mutedForeground }]}>
-          {file.size} · {file.modifiedAt}
-        </Text>
-      </View>
-
-      <View style={styles.badges}>
-        {file.encrypted && (
-          <View style={[styles.badge, { backgroundColor: 'rgba(0, 212, 255, 0.12)', borderColor: 'rgba(0, 212, 255, 0.25)' }]}>
-            <Ionicons name="lock-closed" size={10} color={colors.primary} />
-          </View>
-        )}
-        {file.shared && (
-          <View style={[styles.badge, { backgroundColor: 'rgba(0, 102, 255, 0.12)', borderColor: 'rgba(0, 102, 255, 0.25)' }]}>
-            <Ionicons name="people" size={10} color={colors.accent} />
-          </View>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-}
-
-const styles = StyleSheet.create({
-  card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    marginBottom: 10,
-    gap: 12,
-  },
-  iconBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  info: {
-    flex: 1,
-    gap: 4,
-  },
-  name: {
-    fontSize: 15,
-    fontFamily: 'Inter_600SemiBold',
-  },
-  meta: {
-    fontSize: 12,
-    fontFamily: 'Inter_400Regular',
-  },
-  badges: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  badge: {
-    width: 24,
-    height: 24,
-    borderRadius: 8,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+const styles = StyleSheet.create({ row: { flexDirection: "row", alignItems: "center", minHeight: 68, paddingVertical: 11, gap: 12, borderBottomWidth: 1 }, iconBox: { width: 44, height: 44, borderRadius: 13, alignItems: "center", justifyContent: "center" }, info: { flex: 1, gap: 4 }, name: { fontSize: 15, fontFamily: "Inter_600SemiBold" }, meta: { fontSize: 12, fontFamily: "Inter_400Regular" }, badges: { flexDirection: "row", gap: 6 }, badge: { width: 24, height: 24, borderRadius: 8, borderWidth: 1, alignItems: "center", justifyContent: "center" } });

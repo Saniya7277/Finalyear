@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Platform,
+  ImageBackground,
 } from "react-native";
 import { router, useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -13,8 +14,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/useColors";
 import { useApp } from "@/context/AppContext";
-import { GlassCard } from "@/components/GlassCard";
-import { StatCard } from "@/components/StatCard";
 import { SecurityScore } from "@/components/SecurityScore";
 import { FileCard } from "@/components/FileCard";
 import { UserAvatar } from "@/components/UserCard";
@@ -38,15 +37,29 @@ const QUICK_ACTIONS: QuickAction[] = [
     color: "#00D4FF",
     route: "/(tabs)/upload",
   },
-  { icon: "share-social", label: "Share", color: "#0066FF", action: "share" },
-  { icon: "people", label: "Teammates", color: "#B44FFF", route: "/members" },
+  { icon: "people", label: "Team", color: "#21E6A5", route: "/members" },
+  { icon: "share-social", label: "Share", color: "#19D3F3", action: "share" },
   {
     icon: "sparkles",
     label: "AI Assist",
-    color: "#FF8C00",
+    color: "#A855F7",
     route: "/ai-assistant",
   },
 ];
+
+/** Purely decorative, pointer-free atmosphere kept behind the real Home UI. */
+function SecurityAtmosphere() {
+  return <View pointerEvents="none" style={styles.atmosphere}>
+    <ImageBackground
+      source={require("../../assets/images/backgound.png")}
+      resizeMode="cover"
+      style={styles.backgroundImageContainer}
+      imageStyle={styles.backgroundImage}
+    >
+      <View style={styles.backgroundOverlay} />
+    </ImageBackground>
+  </View>;
+}
 
 function toFileCard(record: SecureFileRecord): SecureFile {
   const modified = new Date(record.modifiedAt);
@@ -114,7 +127,6 @@ export default function Home() {
   ).length;
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
-
   const storagePercent = currentUser.storageUsed / currentUser.storageTotal;
 
   /**
@@ -139,10 +151,7 @@ export default function Home() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Decorative orbs */}
-      <View style={styles.orbTL} />
-      <View style={styles.orbBR} />
-
+      <SecurityAtmosphere />
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
@@ -154,10 +163,10 @@ export default function Home() {
         <View style={styles.header}>
           <View style={styles.greeting}>
             <Text style={[styles.greetLine, { color: colors.mutedForeground }]}>
-              Good morning,
+              Your secure workspace
             </Text>
             <Text style={[styles.greetName, { color: colors.foreground }]}>
-              {currentUser.name.split(" ")[0]}
+              Good evening, {currentUser.name.split(" ")[0]} 👋
             </Text>
           </View>
           <View style={styles.headerActions}>
@@ -179,7 +188,7 @@ export default function Home() {
                 </View>
               )}
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => router.push("/settings")}>
+            <TouchableOpacity onPress={() => router.push("/(tabs)/profile")}>
               <UserAvatar
                 name={currentUser.name}
                 color={currentUser.avatarColor}
@@ -190,31 +199,17 @@ export default function Home() {
         </View>
 
         {/* Security Score + Storage */}
-        <GlassCard style={styles.scoreCard} glowColor="#00D4FF">
-          <View style={styles.scoreRow}>
-            <View style={styles.scoreLeft}>
-              <Text
-                style={[styles.sectionLabel, { color: colors.mutedForeground }]}
-              >
-                Security Score
-              </Text>
-              <SecurityScore score={currentUser.securityScore} size={130} />
-              <TouchableOpacity
-                style={[styles.improveBtn, { borderColor: colors.border }]}
-              >
-                <Text
-                  style={[styles.improveBtnText, { color: colors.primary }]}
-                >
-                  Improve Score
-                </Text>
-                <Ionicons
-                  name="chevron-forward"
-                  size={13}
-                  color={colors.primary}
-                />
-              </TouchableOpacity>
+        <View style={[styles.securityHero, { backgroundColor: "rgba(17,36,56,0.58)", borderColor: "rgba(25,211,243,0.36)" }]}>
+          <View style={styles.securityDetail}>
+            <SecurityScore score={currentUser.securityScore} size={104} />
+            <View style={styles.securityCopy}>
+              <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>Security status</Text>
+              <Text style={[styles.securityHeadline, { color: colors.foreground }]}>Your workspace is secure</Text>
+              <View style={styles.secureLine}><Ionicons name="checkmark-circle" size={14} color={colors.success} /><Text style={[styles.secureText, { color: colors.mutedForeground }]} numberOfLines={1}>Encryption active</Text></View>
+              <TouchableOpacity style={styles.improveBtn}><Text style={[styles.improveBtnText, { color: colors.primary }]}>View security</Text><Ionicons name="arrow-forward" size={13} color={colors.primary} /></TouchableOpacity>
             </View>
-            <View style={styles.scoreRight}>
+          </View>
+          <View style={[styles.scoreRight, { borderTopColor: colors.border }]}>
               <Text
                 style={[styles.sectionLabel, { color: colors.mutedForeground }]}
               >
@@ -224,7 +219,7 @@ export default function Home() {
                 <Text
                   style={[styles.storageUsed, { color: colors.foreground }]}
                 >
-                  {currentUser.storageUsed} GB
+                  {currentUser.storageUsed} GB / {currentUser.storageTotal} GB
                 </Text>
                 <Text
                   style={[
@@ -232,7 +227,7 @@ export default function Home() {
                     { color: colors.mutedForeground },
                   ]}
                 >
-                  of {currentUser.storageTotal} GB
+                  secure storage used
                 </Text>
               </View>
               <View
@@ -267,12 +262,11 @@ export default function Home() {
                     { color: colors.success },
                   ]}
                 >
-                  AES-256 Active
+                  Encryption active
                 </Text>
               </View>
-            </View>
           </View>
-        </GlassCard>
+        </View>
 
         {/* Quick Actions */}
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
@@ -286,7 +280,6 @@ export default function Home() {
               onPress={() => handleQuickAction(action)}
               style={[
                 styles.actionBtn,
-                { backgroundColor: colors.card, borderColor: colors.border },
               ]}
             >
               <View
@@ -301,38 +294,25 @@ export default function Home() {
                   color={action.color}
                 />
               </View>
-              <Text
-                style={[styles.actionLabel, { color: colors.mutedForeground }]}
-              >
-                {action.label}
-              </Text>
+              <Text style={[styles.actionLabel, { color: colors.foreground }]} numberOfLines={1}>{action.label}</Text><View style={[styles.actionArrow, { backgroundColor: `${action.color}20` }]}><Ionicons name="arrow-forward" size={14} color={action.color} /></View>
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* Stats */}
+        {/* Workspace overview */}
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
-          Overview
+          Workspace overview
         </Text>
-        <View style={styles.statsRow}>
-          <StatCard
-            label="Total Files"
-            value={isLoading ? "…" : loadError ? "—" : `${files.length}`}
-            icon="documents"
-            color={colors.primary}
-          />
-          <StatCard
-            label="Shared"
-            value={isLoading ? "…" : loadError ? "—" : `${sharedCount}`}
-            icon="share-social"
-            color={colors.accent}
-          />
-          <StatCard
-            label="Encrypted"
-            value={isLoading ? "…" : loadError ? "—" : `${encryptedCount}`}
-            icon="lock-closed"
-            color={colors.success}
-          />
+        <View style={[styles.statsRow, { backgroundColor: "rgba(17,36,56,0.54)", borderColor: "rgba(25,211,243,0.28)" }]}>
+          {[
+            { label: "Files", value: isLoading ? "…" : loadError ? "—" : `${files.length}`, icon: "documents", color: colors.primary },
+            { label: "Shared", value: isLoading ? "…" : loadError ? "—" : `${sharedCount}`, icon: "share-social", color: colors.mutedForeground },
+            { label: "Encrypted", value: isLoading ? "…" : loadError ? "—" : `${encryptedCount}`, icon: "lock-closed", color: colors.success },
+          ].map((item, index) => <View key={item.label} style={[styles.metric, index > 0 && { borderLeftColor: colors.border, borderLeftWidth: 1 }]}>
+            <Ionicons name={item.icon as any} size={17} color={item.color} />
+            <Text style={[styles.metricValue, { color: colors.foreground }]}>{item.value}</Text>
+            <Text style={[styles.metricLabel, { color: colors.mutedForeground }]}>{item.label}</Text>
+          </View>)}
         </View>
 
         {/* Recent Files */}
@@ -346,6 +326,7 @@ export default function Home() {
             </Text>
           </TouchableOpacity>
         </View>
+        <View style={[styles.recentList, { backgroundColor: "rgba(17,36,56,0.40)", borderColor: "rgba(25,211,243,0.18)" }]}>
         {isLoading ? (
           <Text style={[styles.recentState, { color: colors.mutedForeground }]}>
             Loading files…
@@ -372,42 +353,19 @@ export default function Home() {
             />
           ))
         )}
+        </View>
       </ScrollView>
 
-      {/* Floating Upload Button */}
-      <TouchableOpacity
-        style={[styles.fab, { shadowColor: colors.primary }]}
-        activeOpacity={0.85}
-        onPress={() => router.push("/(tabs)/upload")}
-      >
-        <View style={styles.fabInner}>
-          <Ionicons name="cloud-upload" size={24} color="#050B18" />
-        </View>
-      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  orbTL: {
-    position: "absolute",
-    top: -60,
-    left: -60,
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: "rgba(0,212,255,0.05)",
-  },
-  orbBR: {
-    position: "absolute",
-    top: 200,
-    right: -60,
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: "rgba(0,102,255,0.05)",
-  },
+  atmosphere: { ...StyleSheet.absoluteFillObject, overflow: "hidden" },
+  backgroundImageContainer: { ...StyleSheet.absoluteFillObject },
+  backgroundImage: { resizeMode: "cover" },
+  backgroundOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(3, 11, 24, 0.28)" },
   scroll: { paddingHorizontal: 20 },
   header: {
     flexDirection: "row",
@@ -415,10 +373,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
-  greeting: { gap: 2 },
+  greeting: { flex: 1, minWidth: 0, gap: 2 },
   greetLine: { fontSize: 13, fontFamily: "Inter_400Regular" },
   greetName: { fontSize: 24, fontFamily: "Inter_700Bold" },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 12 },
+  headerActions: { flexDirection: "row", flexShrink: 0, alignItems: "center", gap: 12 },
   iconBtn: {
     width: 40,
     height: 40,
@@ -440,18 +398,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   badgeText: { fontSize: 10, fontFamily: "Inter_700Bold", color: "#FFFFFF" },
-  scoreCard: { marginBottom: 24 },
-  scoreRow: { flexDirection: "row", gap: 16 },
-  scoreLeft: { flex: 1, alignItems: "center", gap: 8 },
-  scoreRight: { flex: 1, gap: 8, justifyContent: "center" },
-  sectionLabel: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  securityHero: { marginBottom: 26, padding: 18, borderRadius: 18, borderWidth: 1, shadowColor: "#19D3F3", shadowOpacity: 0.16, shadowRadius: 18, elevation: 4 },
+  scoreRight: { gap: 8, marginTop: 14, paddingTop: 14, borderTopWidth: 1 },
+  securityDetail: { flexDirection: "row", alignItems: "center", gap: 14 },
+  securityCopy: { flex: 1, minWidth: 0, gap: 6 },
+  securityHeadline: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  secureLine: { flexDirection: "row", alignItems: "center", gap: 5 },
+  secureText: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  sectionLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", letterSpacing: 0.8, textTransform: "uppercase" },
   improveBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 10,
+    paddingHorizontal: 6,
     paddingVertical: 5,
   },
   improveBtnText: { fontSize: 12, fontFamily: "Inter_500Medium" },
@@ -469,30 +428,39 @@ const styles = StyleSheet.create({
   },
   encryptionStatusText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   sectionTitle: { fontSize: 18, fontFamily: "Inter_700Bold", marginBottom: 14 },
-  actionsRow: { flexDirection: "row", gap: 10, marginBottom: 24 },
+  actionsRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 10, marginBottom: 28 },
   actionBtn: {
-    flex: 1,
+    width: "48%",
+    flexDirection: "row",
     alignItems: "center",
-    padding: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
     borderRadius: 14,
     borderWidth: 1,
+    borderColor: "rgba(25,211,243,0.25)",
+    backgroundColor: "rgba(17,36,56,0.54)",
     gap: 8,
   },
   actionIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 11,
     alignItems: "center",
     justifyContent: "center",
   },
-  actionLabel: { fontSize: 11, fontFamily: "Inter_500Medium" },
-  statsRow: { flexDirection: "row", gap: 10, marginBottom: 24 },
+  actionLabel: { flex: 1, minWidth: 0, fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  actionArrow: { width: 26, height: 26, borderRadius: 13, alignItems: "center", justifyContent: "center" },
+  statsRow: { flexDirection: "row", marginBottom: 28, paddingVertical: 17, borderRadius: 15, borderWidth: 1 },
+  metric: { flex: 1, alignItems: "center", gap: 4, paddingHorizontal: 4 },
+  metricValue: { fontSize: 22, fontFamily: "Inter_700Bold" },
+  metricLabel: { fontSize: 11, fontFamily: "Inter_500Medium" },
   recentHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 14,
   },
+  recentList: { borderWidth: 1, borderRadius: 15, paddingHorizontal: 14, overflow: "hidden" },
   seeAll: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   recentState: {
     fontSize: 14,
@@ -502,21 +470,4 @@ const styles = StyleSheet.create({
   },
   recentStateWrap: { alignItems: "center" },
   retryText: { fontSize: 14, fontFamily: "Inter_600SemiBold", paddingBottom: 20 },
-  fab: {
-    position: "absolute",
-    bottom: 90,
-    right: 20,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
-    elevation: 10,
-  },
-  fabInner: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#00D4FF",
-    alignItems: "center",
-    justifyContent: "center",
-  },
 });

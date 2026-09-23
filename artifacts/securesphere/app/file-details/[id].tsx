@@ -24,10 +24,25 @@ export default function FileDetails() {
     if (!details || !user?.id) return;
     try {
       setDownloading(true); setError(null);
-      const keyShare = await apiRef.current.getKeyShare(details.file.id);
-      const fileKey = await unwrapFileKey(user.id, keyShare.ownerPublicKey as JsonWebKey, details.file.id, keyShare.wrappedFileKey, keyShare.wrappingIv);
+      const myDeviceKey = await apiRef.current.getMyDeviceKey();
+      const keyShare = await apiRef.current.getKeyShare(details.file.id, myDeviceKey.id);
+      let fileKey: string;
+      try {
+        fileKey = await unwrapFileKey(user.id, keyShare.ownerPublicKey as JsonWebKey, details.file.id, keyShare.wrappedFileKey, keyShare.wrappingIv);
+      } catch (cause) {
+        const detail = cause instanceof Error ? cause.message : "Unknown key-unwrapping failure.";
+        if (detail.includes("Secure device key unavailable")) {
+          throw new Error("Recipient device key unavailable on this device.");
+        }
+        throw new Error(`File key unwrapping failed: ${detail}`);
+      }
       const ciphertext = await apiRef.current.downloadCiphertext(details.file.id);
-      const plaintext = decryptFileData(ciphertext, fileKey, keyShare.fileIv);
+      let plaintext: Uint8Array;
+      try {
+        plaintext = decryptFileData(ciphertext, fileKey, keyShare.fileIv);
+      } catch {
+        throw new Error("File decryption failed. The ciphertext, key, or encryption IV is invalid.");
+      }
       if (Platform.OS === "web") {
         const href = URL.createObjectURL(new Blob([new Uint8Array(plaintext)], { type: details.file.mimeType }));
         const anchor = document.createElement("a"); anchor.href = href; anchor.download = details.file.name; anchor.click(); URL.revokeObjectURL(href);

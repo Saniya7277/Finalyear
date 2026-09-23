@@ -14,15 +14,15 @@ import { useAuth, useUser } from "@clerk/expo";
 import * as Haptics from "expo-haptics";
 import { useColors } from "@/hooks/useColors";
 import {
-  savePendingInvitation,
   clearPendingInvitation,
 } from "@/lib/pendingInvitation";
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || "http://localhost:3000";
 
 /**
- * Landing screen for the invitation links sent by email
- * (`FRONTEND_URL/accept-invitation/<token>`).
+ * Landing screen for invitation links sent through the public HTTPS landing
+ * page, which hands off `securesphere://accept-invitation/<token>` to Expo
+ * Router when SecureSphere is installed.
  *
  * The token alone is not enough to join: the server also checks that the signed
  * in account's email matches the address that was invited. So this screen has
@@ -154,10 +154,6 @@ export default function AcceptInvitation() {
     }
 
     if (!isSignedIn) {
-      // Park the token so the sign-in flow can bring them back here.
-      if (token) {
-        savePendingInvitation(token);
-      }
       setStatus("needsSignIn");
       return;
     }
@@ -203,14 +199,26 @@ export default function AcceptInvitation() {
               sent to. We&apos;ll bring you straight back here afterwards.
             </Text>
             <TouchableOpacity
-              onPress={() => router.replace("/auth/login")}
+              onPress={() =>
+                router.replace({
+                  pathname: "/auth/login",
+                  params: { invitationToken: token },
+                })
+              }
               style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
             >
               <Text style={[styles.primaryBtnText, { color: colors.primaryForeground }]}>
                 Sign In
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => router.replace("/auth/register")}>
+            <TouchableOpacity
+              onPress={() =>
+                router.replace({
+                  pathname: "/auth/register",
+                  params: { invitationToken: token },
+                })
+              }
+            >
               <Text style={[styles.link, { color: colors.primary }]}>
                 Don&apos;t have an account? Create one
               </Text>

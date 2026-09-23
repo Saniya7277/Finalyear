@@ -1,8 +1,13 @@
 {
   "expo": {
     "name": "SecureSphere",
-    "slug": "securesphere",
+    "slug": "workspace",
     "version": "1.0.0",
+    "extra": {
+      "eas": {
+        "projectId": "25817382-65ba-4b7a-a270-314f42205643"
+      }
+    },
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "securesphere",
@@ -17,6 +22,7 @@
       "supportsTablet": false
     },
     "android": {
+      "package": "com.securesphere.workspace",
       "backgroundColor": "#050B18"
     },
     "web": {
@@ -33,7 +39,8 @@
       "expo-font",
       "expo-web-browser",
       "@clerk/expo",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true,

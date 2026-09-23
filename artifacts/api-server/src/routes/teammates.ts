@@ -10,10 +10,45 @@ import { requireAuth, getClerkId } from "../middlewares/auth";
 import { sendInvitationEmail, isMailConfigured } from "../lib/mailer";
 import crypto from "crypto";
 
-/** Where the invitation link points. */
+const INVITATION_WEB_ORIGIN = "https://securesphere-api.vercel.app";
+
+/**
+ * Where the invitation link points.
+ *
+ * Invitations always enter through the public HTTPS landing page. That page
+ * can open the installed app via its `securesphere://` scheme, while still
+ * being useful to people who have not installed the app yet.
+ */
 function buildInvitationLink(token: string): string {
-  const base = process.env.FRONTEND_URL || "http://localhost:8081";
-  return `${base.replace(/\/+$/, "")}/accept-invitation/${token}`;
+  const configuredBase = process.env.INVITATION_WEB_URL?.trim();
+
+  if (configuredBase) {
+    let configuredUrl: URL;
+    try {
+      configuredUrl = new URL(configuredBase);
+    } catch {
+      throw new Error(
+        `INVITATION_WEB_URL must be the public production origin ${INVITATION_WEB_ORIGIN}`,
+      );
+    }
+
+    // VERCEL_URL identifies the deployment handling this request. On preview
+    // deployments it can be a protected, deployment-specific hostname, so it
+    // must never determine an emailed invitation URL. Keep the optional
+    // configuration pinned to the one public production landing page as well.
+    if (
+      configuredUrl.origin !== INVITATION_WEB_ORIGIN ||
+      configuredUrl.pathname !== "/" ||
+      configuredUrl.search ||
+      configuredUrl.hash
+    ) {
+      throw new Error(
+        `INVITATION_WEB_URL must be the public production origin ${INVITATION_WEB_ORIGIN}`,
+      );
+    }
+  }
+
+  return `${INVITATION_WEB_ORIGIN}/accept-invitation/${token}`;
 }
 
 /** Best display name for the person doing the inviting. */

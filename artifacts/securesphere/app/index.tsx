@@ -1,8 +1,9 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -36,9 +37,57 @@ function BouncingDot({ delay }: { delay: number }) {
   return <Animated.View style={[styles.dot, style]} />;
 }
 
+function StartupVideo({ onComplete }: { onComplete: () => void }) {
+  const hasCompleted = useRef(false);
+  const player = useVideoPlayer(require('../assets/images/video.mp4'), (videoPlayer) => {
+    videoPlayer.loop = false;
+    // Muted autoplay keeps the required hands-free startup flow reliable on web.
+    videoPlayer.muted = true;
+  });
+
+  const finish = useCallback(() => {
+    if (hasCompleted.current) return;
+    hasCompleted.current = true;
+    player.pause();
+    onComplete();
+  }, [onComplete, player]);
+
+  useEffect(() => {
+    const loadTimeout = setTimeout(finish, 8000);
+    const onLoad = player.addListener('sourceLoad', () => clearTimeout(loadTimeout));
+    const onEnd = player.addListener('playToEnd', finish);
+    const onStatusChange = player.addListener('statusChange', ({ status }) => {
+      if (status === 'error') finish();
+    });
+
+    player.play();
+
+    return () => {
+      clearTimeout(loadTimeout);
+      onLoad.remove();
+      onEnd.remove();
+      onStatusChange.remove();
+    };
+  }, [finish, player]);
+
+  return (
+    <View style={styles.videoContainer}>
+      <VideoView
+        player={player}
+        style={styles.video}
+        contentFit="contain"
+        nativeControls={false}
+        allowsFullscreen={false}
+        playsInline
+      />
+    </View>
+  );
+}
+
 export default function SplashScreen() {
   const { isAuthenticated, hasCompletedOnboarding, isLoading } = useApp();
   const insets = useSafeAreaInsets();
+  const [nextRoute, setNextRoute] = useState<string | null>(null);
   const scale = useSharedValue(0.8);
   const opacity = useSharedValue(0);
   const pulseOpacity = useSharedValue(0.3);
@@ -69,18 +118,28 @@ export default function SplashScreen() {
   useEffect(() => {
     if (isLoading) return;
     const t = setTimeout(async () => {
+      let destination: string;
       if (!hasCompletedOnboarding) {
-        router.replace('/onboarding');
+        destination = '/onboarding';
       } else if (!isAuthenticated) {
-        router.replace('/auth/login');
+        destination = '/auth/login';
       } else {
         // An invitation opened while signed out waits here; finish it rather
         // than landing on Home with the link silently forgotten.
-        router.replace((await resolvePostAuthRoute()) as any);
+        destination = await resolvePostAuthRoute();
       }
+      setNextRoute(destination);
     }, 2600);
     return () => clearTimeout(t);
   }, [isLoading, isAuthenticated, hasCompletedOnboarding]);
+
+  const continueFromStartupVideo = useCallback(() => {
+    if (nextRoute) router.replace(nextRoute as any);
+  }, [nextRoute]);
+
+  if (nextRoute) {
+    return <StartupVideo onComplete={continueFromStartupVideo} />;
+  }
 
   return (
     <LinearGradient colors={['#050B18', '#0A1628', '#050B18']} style={styles.container}>
@@ -182,5 +241,13 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: '#00D4FF',
     opacity: 0.7,
+  },
+  videoContainer: {
+    flex: 1,
+    backgroundColor: '#07111F',
+  },
+  video: {
+    width: '100%',
+    height: '100%',
   },
 });

@@ -13,7 +13,7 @@ export function useAuthenticatedApi() {
       throw new Error("User is not signed in.");
     }
 
-    const token = await getToken();
+    const token = await getToken(); console.log("SecureSphere auth token available:", Boolean(token), "API:", API_BASE_URL); console.log("SecureSphere auth token available:", Boolean(token)); console.log("SecureSphere auth token available:", Boolean(token));
     if (!token) {
       throw new Error("Clerk session token is unavailable.");
     }
@@ -39,3 +39,6 @@ export function useAuthenticatedApi() {
 
   return { request };
 }
+
+
+

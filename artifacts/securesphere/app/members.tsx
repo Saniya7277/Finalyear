@@ -256,7 +256,6 @@ export default function Members() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.orbTL} />
       <View style={[styles.header, { paddingTop: topPad + 8 }]}>
         <TouchableOpacity
           onPress={() => router.back()}
@@ -267,9 +266,7 @@ export default function Members() {
         >
           <Ionicons name="arrow-back" size={20} color={colors.foreground} />
         </TouchableOpacity>
-        <Text style={[styles.title, { color: colors.foreground }]}>
-          Teammates
-        </Text>
+        <View style={styles.titleWrap}><Text style={[styles.title, { color: colors.foreground }]}>Team</Text><Text style={[styles.subtitle, { color: colors.mutedForeground }]}>Your workspace</Text></View>
         <TouchableOpacity
           onPress={handleInvitePress}
           style={[styles.backBtn, { backgroundColor: colors.primary }]}
@@ -454,15 +451,6 @@ export default function Members() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  orbTL: {
-    position: "absolute",
-    top: -60,
-    right: -60,
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: "rgba(0,102,255,0.05)",
-  },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -478,7 +466,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  title: { fontSize: 20, fontFamily: "Inter_700Bold" },
+  titleWrap: { flex: 1, alignItems: "center" },
+  title: { fontSize: 22, fontFamily: "Inter_700Bold" },
+  subtitle: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 1 },
   statsBar: {
     flexDirection: "row",
     paddingHorizontal: 20,
@@ -534,9 +524,10 @@ const styles = StyleSheet.create({
   userCard: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
+    paddingVertical: 13,
+    borderRadius: 0,
+    borderWidth: 0,
+    borderBottomWidth: 1,
     gap: 12,
   },
   avatarWrap: { position: "relative" },

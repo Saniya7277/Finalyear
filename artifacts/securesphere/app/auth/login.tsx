@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,9 +20,19 @@ import * as Haptics from 'expo-haptics';
 import { formatClerkError } from '@/utils/authErrors';
 import { resolvePostAuthRoute } from '@/lib/pendingInvitation';
 
+type VerificationStage = 'first' | 'second';
+
+type VerificationFactor = {
+  strategy: 'email_code' | 'phone_code' | 'totp' | 'backup_code';
+  safeIdentifier?: string;
+  emailAddressId?: string;
+  phoneNumberId?: string;
+};
+
 export default function Login() {
   const { signIn } = useSignIn();
-  const { setActive, signOut } = useClerk();
+  const { signOut } = useClerk();
+  const { invitationToken } = useLocalSearchParams<{ invitationToken?: string }>();
   const insets = useSafeAreaInsets();
 
   const [email, setEmail] = useState('');
@@ -30,9 +40,184 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [verificationStage, setVerificationStage] = useState<VerificationStage | null>(null);
+  const [verificationFactors, setVerificationFactors] = useState<VerificationFactor[]>([]);
+  const [selectedFactor, setSelectedFactor] = useState<VerificationFactor | null>(null);
+  const [verificationCode, setVerificationCode] = useState('');
+  const finalizingRef = useRef(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const botPad = Platform.OS === 'web' ? 34 : insets.bottom;
+
+  const completeSignIn = async () => {
+    if (signIn.status !== 'complete' || !signIn.createdSessionId) {
+      setErrorMessage('Your sign-in is not complete yet. Please finish the required verification.');
+      return;
+    }
+
+    // `finalize()` activates the session in the installed SignInFuture API.
+    // Keep this one-shot: verification callbacks and repeated presses must not
+    // attempt to activate the same session more than once.
+    if (finalizingRef.current) return;
+    finalizingRef.current = true;
+
+    try {
+      const finalized = await signIn.finalize();
+      console.log('SignIn Finalize result:', finalized);
+
+      if (finalized.error) {
+        const parsed = formatClerkError(finalized.error, 'Sign In Failed');
+        setErrorMessage(parsed.message);
+        finalizingRef.current = false;
+        return;
+      }
+
+      router.replace((await resolvePostAuthRoute(invitationToken)) as any);
+    } catch (err: any) {
+      const parsed = formatClerkError(err, 'Sign In Failed');
+      setErrorMessage(parsed.message);
+      finalizingRef.current = false;
+    }
+  };
+
+  const showVerification = (stage: VerificationStage) => {
+    const available = (stage === 'first'
+      ? signIn.supportedFirstFactors
+      : signIn.supportedSecondFactors) as VerificationFactor[] | null;
+    const supported = (available || []).filter((factor) =>
+      ['email_code', 'phone_code', 'totp', 'backup_code'].includes(factor.strategy),
+    );
+
+    if (!supported.length) {
+      setErrorMessage(
+        stage === 'first'
+          ? 'This sign-in requires a first-factor method that SecureSphere cannot complete here.'
+          : 'This account requires a verification method that SecureSphere cannot complete here.',
+      );
+      return;
+    }
+
+    setVerificationStage(stage);
+    setVerificationFactors(supported);
+    setSelectedFactor(null);
+    setVerificationCode('');
+  };
+
+  const handleSignInState = async () => {
+    if (signIn.status === 'complete') {
+      await completeSignIn();
+      return;
+    }
+
+    if (signIn.status === 'needs_first_factor') {
+      showVerification('first');
+      return;
+    }
+
+    // Clerk 4.6.6 uses this status for a new Android device that needs a
+    // second factor to establish device trust. The same factors are exposed
+    // through supportedSecondFactors as a regular MFA challenge.
+    if (signIn.status === 'needs_second_factor' || signIn.status === 'needs_client_trust') {
+      showVerification('second');
+      return;
+    }
+
+    if (signIn.status === 'needs_new_password') {
+      setErrorMessage('A password reset is required. Please use Forgot password.');
+      return;
+    }
+
+    if (signIn.status === 'needs_identifier') {
+      setErrorMessage('Enter your email address and password to continue.');
+      return;
+    }
+
+    if (signIn.status === 'needs_protect_check') {
+      setErrorMessage('This sign-in requires a Clerk security check that is not available in this app version.');
+      return;
+    }
+
+    setErrorMessage(`SecureSphere received an unsupported sign-in status: ${signIn.status}.`);
+  };
+
+  const startVerification = async (factor: VerificationFactor) => {
+    if (!verificationStage) return;
+
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      if (factor.strategy === 'email_code') {
+        const result = verificationStage === 'first'
+          ? await signIn.emailCode.sendCode()
+          : await signIn.mfa.sendEmailCode();
+        if (result.error) {
+          const parsed = formatClerkError(result.error, 'Verification Failed');
+          setErrorMessage(parsed.message);
+          return;
+        }
+      } else if (factor.strategy === 'phone_code') {
+        const result = verificationStage === 'first'
+          ? await signIn.phoneCode.sendCode()
+          : await signIn.mfa.sendPhoneCode();
+        if (result.error) {
+          const parsed = formatClerkError(result.error, 'Verification Failed');
+          setErrorMessage(parsed.message);
+          return;
+        }
+      }
+
+      setSelectedFactor(factor);
+      setVerificationCode('');
+    } catch (err: any) {
+      const parsed = formatClerkError(err, 'Verification Failed');
+      setErrorMessage(parsed.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const verifyFactor = async () => {
+    if (!verificationStage || !selectedFactor || !verificationCode.trim()) {
+      setErrorMessage('Select a verification method and enter its code.');
+      return;
+    }
+
+    setLoading(true);
+    setErrorMessage(null);
+    try {
+      const code = verificationCode.trim();
+      const result = verificationStage === 'first'
+        ? selectedFactor.strategy === 'email_code'
+          ? await signIn.emailCode.verifyCode({ code })
+          : selectedFactor.strategy === 'phone_code'
+            ? await signIn.phoneCode.verifyCode({ code })
+            : null
+        : selectedFactor.strategy === 'email_code'
+          ? await signIn.mfa.verifyEmailCode({ code })
+          : selectedFactor.strategy === 'phone_code'
+            ? await signIn.mfa.verifyPhoneCode({ code })
+            : selectedFactor.strategy === 'totp'
+              ? await signIn.mfa.verifyTOTP({ code })
+              : await signIn.mfa.verifyBackupCode({ code });
+
+      if (!result) {
+        setErrorMessage('This verification method cannot be used as a first factor.');
+        return;
+      }
+
+      if (result.error) {
+        const parsed = formatClerkError(result.error, 'Verification Failed');
+        setErrorMessage(parsed.message);
+        return;
+      }
+      await handleSignInState();
+    } catch (err: any) {
+      const parsed = formatClerkError(err, 'Verification Failed');
+      setErrorMessage(parsed.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogin = async () => {
     setErrorMessage(null);
@@ -79,33 +264,10 @@ export default function Login() {
         return;
       }
 
-      // Finalize the sign-in attempt
-      const finalized = await signIn.finalize();
-      console.log('SignIn Finalize result:', finalized);
-
-      if (finalized?.error) {
-        console.warn('SignIn Finalize error:', finalized.error);
-        const parsed = formatClerkError(finalized.error, 'Sign In Failed');
-        setErrorMessage(parsed.message);
-        return;
-      }
-
-      // Set active session in Clerk
-      if (signIn.createdSessionId) {
-        await setActive({
-          session: signIn.createdSessionId,
-        });
-
-        // Resumes a pending invitation if the user got here from an email link.
-        router.replace((await resolvePostAuthRoute()) as any);
-      } else {
-        // Fallback for multi-factor or secondary requirement
-        if (signIn.status === 'needs_first_factor' || signIn.status === 'needs_second_factor') {
-          Alert.alert('Verification Required', 'Additional authentication is required for this account.');
-        } else {
-          router.replace((await resolvePostAuthRoute()) as any);
-        }
-      }
+      // `password()` mutates the SignIn resource. It may leave it in
+      // `needs_second_factor`; only `complete` with a created session can be
+      // finalized and allowed into the app.
+      await handleSignInState();
     } catch (err: any) {
       console.error('LOGIN UNHANDLED ERROR:', err);
       const parsed = formatClerkError(err, 'Sign In Failed');
@@ -167,6 +329,81 @@ export default function Login() {
 
           {/* Form */}
           <View style={styles.form}>
+            {verificationStage ? (
+              <>
+                <View style={styles.verificationIntro}>
+                  <Ionicons name="shield-checkmark-outline" size={24} color="#00D4FF" />
+                  <Text style={styles.verificationTitle}>
+                    {verificationStage === 'second' ? 'Additional verification required' : 'Verify your sign-in'}
+                  </Text>
+                  <Text style={styles.verificationBody}>
+                    {selectedFactor
+                      ? 'Enter the code from your selected verification method.'
+                      : 'Choose a verification method to continue securely.'}
+                  </Text>
+                </View>
+
+                {!selectedFactor ? verificationFactors.map((factor, index) => (
+                  <TouchableOpacity
+                    key={`${factor.strategy}-${factor.safeIdentifier || index}`}
+                    style={styles.verificationMethod}
+                    activeOpacity={0.8}
+                    onPress={() => void startVerification(factor)}
+                    disabled={loading}
+                  >
+                    <Ionicons
+                      name={factor.strategy === 'email_code' ? 'mail-outline' : factor.strategy === 'phone_code' ? 'phone-portrait-outline' : 'key-outline'}
+                      size={20}
+                      color="#00D4FF"
+                    />
+                    <Text style={styles.verificationMethodText}>
+                      {factor.strategy === 'email_code'
+                        ? `Email code${factor.safeIdentifier ? ` (${factor.safeIdentifier})` : ''}`
+                        : factor.strategy === 'phone_code'
+                          ? `Text message${factor.safeIdentifier ? ` (${factor.safeIdentifier})` : ''}`
+                          : factor.strategy === 'totp'
+                            ? 'Authenticator app code'
+                            : 'Backup code'}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={18} color="#7A9BB5" />
+                  </TouchableOpacity>
+                )) : (
+                  <>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>
+                        {selectedFactor.strategy === 'backup_code' ? 'Backup Code' : 'Verification Code'}
+                      </Text>
+                      <View style={styles.inputWrapper}>
+                        <Ionicons name="shield-checkmark-outline" size={18} color="#7A9BB5" style={styles.inputIcon} />
+                        <TextInput
+                          style={styles.input}
+                          value={verificationCode}
+                          onChangeText={(value) => {
+                            setVerificationCode(value);
+                            if (errorMessage) setErrorMessage(null);
+                          }}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          keyboardType={selectedFactor.strategy === 'backup_code' ? 'default' : 'number-pad'}
+                          placeholder="Enter code"
+                          placeholderTextColor="#7A9BB5"
+                          editable={!loading}
+                        />
+                      </View>
+                    </View>
+                    <TouchableOpacity onPress={() => void verifyFactor()} activeOpacity={0.8} disabled={loading} style={[styles.loginBtnContainer, loading && styles.disabledBtn]}>
+                      <LinearGradient colors={['#00D4FF', '#0066FF']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.loginBtn}>
+                        {loading ? <ActivityIndicator size="small" color="#050B18" /> : <Text style={styles.loginBtnText}>Verify and Sign In</Text>}
+                      </LinearGradient>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setSelectedFactor(null)} disabled={loading}>
+                      <Text style={styles.changeMethodText}>Use a different method</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
             {/* Email Field */}
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>Email</Text>
@@ -275,12 +512,19 @@ export default function Login() {
               <Ionicons name="finger-print" size={20} color="#00D4FF" />
               <Text style={styles.biometricText}>Sign in with Biometrics</Text>
             </TouchableOpacity>
+              </>
+            )}
           </View>
 
           {/* Register Link */}
           <TouchableOpacity
             style={styles.registerRow}
-            onPress={() => router.push('/auth/register')}
+            onPress={() =>
+              router.push({
+                pathname: '/auth/register',
+                params: invitationToken ? { invitationToken } : {},
+              })
+            }
             disabled={loading}
           >
             <Text style={styles.registerText}>Don&apos;t have an account? </Text>
@@ -341,6 +585,21 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   form: { gap: 16 },
+  verificationIntro: { alignItems: 'center', gap: 8, marginBottom: 4 },
+  verificationTitle: { fontSize: 18, fontFamily: 'Inter_700Bold', color: '#E8F4FD', textAlign: 'center' },
+  verificationBody: { fontSize: 14, fontFamily: 'Inter_400Regular', color: '#7A9BB5', textAlign: 'center', lineHeight: 20 },
+  verificationMethod: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#1A3050',
+    backgroundColor: '#0D1B2A',
+    padding: 16,
+  },
+  verificationMethodText: { flex: 1, fontSize: 14, fontFamily: 'Inter_600SemiBold', color: '#E8F4FD' },
+  changeMethodText: { textAlign: 'center', fontSize: 14, fontFamily: 'Inter_500Medium', color: '#00D4FF' },
   inputGroup: { gap: 8 },
   inputLabel: { fontSize: 13, fontFamily: 'Inter_500Medium', color: '#A8C4DC' },
   inputWrapper: {

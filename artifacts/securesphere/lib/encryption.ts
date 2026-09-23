@@ -132,6 +132,9 @@ export async function storeKeySecurely(
   fileId: string,
   keyHex: string,
 ): Promise<void> {
+  if (!isFileKey(keyHex)) {
+    throw new Error("Refusing to store an invalid local AES-256 file key.");
+  }
   if (isWebPlatform()) {
     await setWebKey(fileId, keyHex);
     return;
@@ -147,9 +150,18 @@ export async function storeKeySecurely(
 export async function retrieveKeySecurely(
   fileId: string,
 ): Promise<string | null> {
+  let key: string | null;
   if (isWebPlatform()) {
-    return await getWebKey(fileId);
+    key = await getWebKey(fileId);
+  } else {
+    key = await SecureStore.getItemAsync(`file_key_${fileId}`);
   }
 
-  return await SecureStore.getItemAsync(`file_key_${fileId}`);
+  // A malformed value must not reach the wrapping code. Treat it exactly as
+  // unavailable; neither an API request nor a replacement key is attempted.
+  return key && isFileKey(key) ? key : null;
+}
+
+function isFileKey(value: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(value);
 }

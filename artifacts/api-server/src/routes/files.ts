@@ -1,22 +1,20 @@
-import { Router, Request, Response, NextFunction } from "express";
-import multer from "multer";
+import { Router, Request, Response } from "express";
 import {
   db,
   usersTable,
   teammatesTable,
   filesTable,
   fileSharesTable,
+  fileShareDeviceKeysTable,
   userDeviceKeysTable,
   type ScanVerdict,
   type SharePermission,
 } from "@workspace/db";
 import { eq, and, inArray, desc, isNull } from "drizzle-orm";
 import { requireAuth, getClerkId } from "../middlewares/auth";
-import { scanFile } from "../lib/spamScanner";
-import { encryptToBlob, isEncryptionConfigured } from "../lib/encryption";
 import {
   buildObjectPath,
-  uploadEncryptedObject,
+  createSignedUploadUrl,
   downloadEncryptedObject,
   deleteEncryptedObject,
   isStorageConfigured,
@@ -26,40 +24,6 @@ import { logger } from "../lib/logger";
 const router = Router();
 
 router.use(requireAuth);
-
-const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
-
-// Files are held in memory only long enough to scan and encrypt them. The
-// plaintext never touches disk and never leaves this process unencrypted.
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
-});
-
-/**
- * Multer reports failures through `next(err)`, which would otherwise bypass the
- * route handler and fall through to Express' HTML error page. Translate them
- * into the same JSON shape the rest of the API returns.
- */
-function acceptUpload(req: Request, res: Response, next: NextFunction): void {
-  upload.single("file")(req, res, (err: unknown) => {
-    if (!err) {
-      next();
-      return;
-    }
-
-    if (err instanceof multer.MulterError) {
-      const message =
-        err.code === "LIMIT_FILE_SIZE"
-          ? `File is too large. The limit is ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB.`
-          : `Upload failed: ${err.message}`;
-      res.status(400).json({ error: message });
-      return;
-    }
-
-    next(err);
-  });
-}
 
 /** Map a MIME type onto the file kinds the app knows how to render. */
 function resolveFileKind(mimeType: string, fileName: string): string {
@@ -142,118 +106,103 @@ function paramId(req: Request): string {
   return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
 }
 
-router.post(
-  "/upload",
-  acceptUpload,
-  async (req: Request, res: Response): Promise<void> => {
-    let uploadedPath: string | null = null;
+router.post("/upload-url", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const clerkId = getClerkId(req);
+    const filename =
+      typeof req.body?.filename === "string" && req.body.filename.trim()
+        ? req.body.filename.trim()
+        : "untitled";
 
+    const objectPath = buildObjectPath(clerkId);
+    const signed = await createSignedUploadUrl(objectPath);
+
+    res.json({
+      success: true,
+      path: signed.path,
+      token: signed.token,
+      signedUrl: signed.signedUrl,
+      filename,
+    });
+  } catch (error) {
+    logger.error({ err: error }, "Failed to create secure upload URL");
+    res.status(500).json({ error: "Failed to prepare secure upload." });
+  }
+});
+
+router.post(
+  "/complete-upload",
+  async (req: Request, res: Response): Promise<void> => {
     try {
       const clerkId = getClerkId(req);
-      const file = req.file;
-      const filename =
-        typeof req.body?.filename === "string" && req.body.filename.trim()
-          ? req.body.filename.trim()
-          : file?.originalname || "untitled";
-      const mimeType =
-        typeof req.body?.mimeType === "string" && req.body.mimeType.trim()
-          ? req.body.mimeType.trim()
-          : "application/octet-stream";
-      const iv = typeof req.body?.iv === "string" ? req.body.iv.trim() : "";
-      const scanResult =
-        typeof req.body?.malwareScanResult === "string"
-          ? req.body.malwareScanResult.trim().toUpperCase()
-          : "";
-      const confidence = Number(req.body?.malwareScanConfidence ?? 0);
-
-      if (!file) {
-        res.status(400).json({ error: "No file was uploaded." });
-        return;
-      }
-
-      if (file.size === 0) {
-        res.status(400).json({ error: "The encrypted file is empty." });
-        return;
-      }
-
-      if (!/^[0-9a-fA-F]{24}$/.test(iv)) {
-        res
-          .status(400)
-          .json({ error: "A valid 12-byte encryption IV is required." });
-        return;
-      }
+      const {
+        path: objectPath,
+        filename,
+        mimeType,
+        size,
+        iv,
+        malwareScanResult,
+        malwareScanConfidence,
+      } = req.body ?? {};
 
       if (
-        scanResult !== "SAFE" ||
-        !Number.isFinite(confidence) ||
-        confidence < 0 ||
-        confidence > 1
+        typeof objectPath !== "string" ||
+        !objectPath.startsWith(`${clerkId}/`) ||
+        typeof filename !== "string" ||
+        typeof mimeType !== "string" ||
+        !Number.isFinite(Number(size)) ||
+        typeof iv !== "string" ||
+        !iv
       ) {
-        res
-          .status(422)
-          .json({ error: "The file did not pass the local security scan." });
-        return;
-      }
-
-      const user = await requireUserRow(clerkId);
-      if (!user) {
-        res.status(404).json({
-          error: "User profile not found. Sign out and back in to sync it.",
-        });
+        res.status(400).json({ error: "Invalid upload metadata." });
         return;
       }
 
       if (!isStorageConfigured()) {
-        res.status(503).json({
-          error:
-            "Supabase Storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.",
-        });
+        res.status(503).json({ error: "Secure storage is not configured." });
         return;
       }
 
-      const objectPath = buildObjectPath(clerkId);
-      await uploadEncryptedObject(objectPath, file.buffer);
-      uploadedPath = objectPath;
+      await requireUserRow(clerkId);
+
+      const scanVerdict =
+        typeof malwareScanResult === "string"
+          ? malwareScanResult.trim().toUpperCase()
+          : "SAFE";
+
+      if (scanVerdict !== "SAFE") {
+        res.status(400).json({ error: "Only clean files can be completed." });
+        return;
+      }
+
+      const confidence = Number(malwareScanConfidence ?? 0);
 
       const [stored] = await db
         .insert(filesTable)
         .values({
           ownerClerkId: clerkId,
-          filename,
-          mimeType,
-          sizeBytes: file.size,
+          filename: filename.trim() || "untitled",
+          mimeType: mimeType.trim() || "application/octet-stream",
+          sizeBytes: Number(size),
           supabasePath: objectPath,
           iv: iv.toLowerCase(),
           encrypted: true,
           malwareScanResult: "clean",
-          malwareScanConfidence: confidence,
+          malwareScanConfidence: Number.isFinite(confidence) ? confidence : 0,
         })
         .returning(fileColumns);
 
-      uploadedPath = null;
       res.status(201).json({
         success: true,
         fileId: stored.id,
         file: toFileResponse(stored),
       });
     } catch (error) {
-      if (uploadedPath) {
-        await deleteEncryptedObject(uploadedPath).catch((cleanupError) => {
-          logger.error(
-            { err: cleanupError, path: uploadedPath },
-            "Failed to clean up orphaned encrypted object",
-          );
-        });
-      }
-
-      logger.error({ err: error }, "Encrypted upload failed");
-      res
-        .status(500)
-        .json({ error: "Failed to store the encrypted file securely." });
+      logger.error({ err: error }, "Failed to complete secure upload");
+      res.status(500).json({ error: "Failed to complete secure upload." });
     }
   },
 );
-
 /** Look up the caller's user row; every file operation is scoped to it. */
 async function requireUserRow(clerkId: string) {
   const rows = await db
@@ -285,207 +234,6 @@ async function filterToTeammates(
 
   return rows.map((row) => row.teammateUserId);
 }
-
-/**
- * POST /api/files/share
- *
- * The secure share pipeline, in strict order:
- *   1. Accept the picked file into server memory
- *   2. AI layer scans the plaintext for spam / phishing / malware
- *   3. Only on a clean verdict, encrypt with AES-256-GCM
- *   4. Only after encryption, upload the ciphertext to Supabase Storage
- *   5. Only after the upload, insert the metadata row
- *   6. Record the share rows for the selected teammates
- *
- * A flagged file is never encrypted, never uploaded, and never recorded - it is
- * rejected with the scan verdict so the app can explain why.
- *
- * The scan needs plaintext, which is why it runs before encryption and why it
- * runs here rather than anywhere Supabase can observe. Supabase only ever
- * receives step 4's output.
- *
- * Multipart fields: `file` (required), `shareWith` (optional JSON array of
- * teammate Clerk ids), `permission` (optional "viewer" | "editor").
- */
-router.post(
-  "/share",
-  acceptUpload,
-  async (req: Request, res: Response): Promise<void> => {
-    // Tracked so a failure after the upload can remove the orphaned ciphertext.
-    let uploadedPath: string | null = null;
-
-    try {
-      const clerkId = getClerkId(req);
-      const file = req.file;
-
-      if (!file) {
-        res.status(400).json({ error: "No file was uploaded." });
-        return;
-      }
-
-      if (file.size === 0) {
-        res.status(400).json({ error: "The selected file is empty." });
-        return;
-      }
-
-      const user = await requireUserRow(clerkId);
-      if (!user) {
-        res.status(404).json({
-          error: "User profile not found. Sign out and back in to sync it.",
-        });
-        return;
-      }
-
-      // Fail before spending a scan if the file could not be protected anyway.
-      // Refusing here is the point: without a key there is no path that stores
-      // a readable file.
-      if (!isEncryptionConfigured()) {
-        res.status(503).json({
-          error:
-            "File encryption is not configured on the server. Set FILE_ENCRYPTION_KEY (openssl rand -hex 32).",
-        });
-        return;
-      }
-
-      if (!isStorageConfigured()) {
-        res.status(503).json({
-          error:
-            "Supabase Storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.",
-        });
-        return;
-      }
-
-      const fileName = file.originalname || "untitled";
-      const mimeType = file.mimetype || "application/octet-stream";
-
-      // --- Step 1: AI scan (needs plaintext, so it must run first) ----------
-      const scan = await scanFile({
-        fileName,
-        mimeType,
-        buffer: file.buffer,
-      });
-
-      if (scan.verdict === "flagged") {
-        // Nothing is encrypted, uploaded, or recorded. The reason is returned
-        // to the user but deliberately not persisted - it can quote file
-        // content, and that content is exactly what must not reach the database.
-        logger.warn(
-          { riskScore: scan.riskScore, labels: scan.labels },
-          "Upload blocked by AI scan",
-        );
-
-        res.status(422).json({
-          error: "This file was blocked by the security scan.",
-          scan: {
-            verdict: scan.verdict,
-            riskScore: scan.riskScore,
-            reason: scan.reason,
-            labels: scan.labels,
-            engine: scan.engine,
-            aiAvailable: scan.aiAvailable,
-          },
-        });
-        return;
-      }
-
-      // --- Step 2: encrypt (only reached on a green signal) -----------------
-      const { blob, iv } = encryptToBlob(file.buffer);
-
-      // --- Step 3: upload ciphertext ----------------------------------------
-      const objectPath = buildObjectPath(clerkId);
-      await uploadEncryptedObject(objectPath, blob);
-      uploadedPath = objectPath;
-
-      // --- Step 4: record the metadata --------------------------------------
-      const [stored] = await db
-        .insert(filesTable)
-        .values({
-          ownerClerkId: clerkId,
-          filename: fileName,
-          mimeType,
-          sizeBytes: file.size,
-          supabasePath: objectPath,
-          iv,
-          encrypted: true,
-          malwareScanResult: scan.verdict,
-          malwareScanConfidence: scan.riskScore / 100,
-        })
-        .returning(fileColumns);
-
-      // The row now owns the object; no rollback needed past this point.
-      uploadedPath = null;
-
-      // --- Step 5: share with the selected teammates ------------------------
-      let requestedIds: string[] = [];
-      const rawShareWith = req.body?.shareWith;
-      if (typeof rawShareWith === "string" && rawShareWith.trim()) {
-        try {
-          const parsed = JSON.parse(rawShareWith);
-          if (Array.isArray(parsed)) {
-            requestedIds = parsed.filter(
-              (value): value is string => typeof value === "string",
-            );
-          }
-        } catch {
-          // A malformed shareWith should not undo a successful upload.
-          logger.warn("Ignoring malformed shareWith field");
-        }
-      }
-
-      const permission: SharePermission =
-        req.body?.permission === "editor" ? "editor" : "viewer";
-
-      const recipientIds = await filterToTeammates(clerkId, requestedIds);
-
-      if (recipientIds.length > 0) {
-        await db
-          .insert(fileSharesTable)
-          .values(
-            recipientIds.map((recipientId) => ({
-              fileId: stored.id,
-              sharedWithUserId: recipientId,
-              sharedByUserId: clerkId,
-              permission,
-            })),
-          )
-          .onConflictDoNothing();
-      }
-
-      res.status(201).json({
-        success: true,
-        file: toFileResponse(stored),
-        scan: {
-          verdict: scan.verdict,
-          riskScore: scan.riskScore,
-          reason: scan.reason,
-          labels: scan.labels,
-          engine: scan.engine,
-          aiAvailable: scan.aiAvailable,
-        },
-        sharedWith: recipientIds,
-        ignoredRecipients: requestedIds.filter(
-          (id) => !recipientIds.includes(id),
-        ),
-      });
-      return;
-    } catch (error) {
-      // An upload that never got its row would leave ciphertext nobody can
-      // account for. Remove it.
-      if (uploadedPath) {
-        await deleteEncryptedObject(uploadedPath).catch((cleanupError) => {
-          logger.error(
-            { err: cleanupError, path: uploadedPath },
-            "Failed to clean up orphaned encrypted object",
-          );
-        });
-      }
-
-      logger.error({ err: error }, "Secure share failed");
-      res.status(500).json({ error: "Failed to store the file securely." });
-      return;
-    }
-  },
-);
 
 /**
  * GET /api/files
@@ -629,29 +377,33 @@ router.get("/:id", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-/**
- * GET /api/files/:id/content
- *
- * Fetch the ciphertext from Storage and decrypt it here, in the API. This is
- * the only place a file exists as plaintext again, and it happens after the
- * caller's access has been checked. No signed Storage URL is ever issued, so
- * there is no path by which a client reads the bucket directly.
- *
- * GCM authenticates as it decrypts: a modified object fails rather than
- * returning corrupted bytes.
- */
+/** GET /api/files/:id/content — authorizes and returns opaque ciphertext only. */
 router.get(
   "/:id/key-share",
   async (req: Request, res: Response): Promise<void> => {
     try {
       const clerkId = getClerkId(req);
+      const deviceKeyId = typeof req.query.deviceKeyId === "string" ? req.query.deviceKeyId : "";
+      if (!deviceKeyId) { res.status(400).json({ error: "A recipient device key is required." }); return; }
+      const [requestDevice] = await db.select({ id: userDeviceKeysTable.id }).from(userDeviceKeysTable).where(and(
+        eq(userDeviceKeysTable.id, deviceKeyId),
+        eq(userDeviceKeysTable.userId, clerkId),
+        isNull(userDeviceKeysTable.revokedAt),
+      )).limit(1);
+      if (!requestDevice) { res.status(403).json({ error: "Recipient device key unavailable on this device." }); return; }
       const [share] = await db.select().from(fileSharesTable).where(and(eq(fileSharesTable.fileId, paramId(req)), eq(fileSharesTable.sharedWithUserId, clerkId))).limit(1);
-      if (!share || !share.wrappedFileKey || !share.wrappingIv || !share.ownerDeviceKeyId) { res.status(404).json({ error: "No usable secure share was found." }); return; }
+      if (!share || !share.ownerDeviceKeyId) { res.status(404).json({ error: "No usable secure share was found." }); return; }
+      const [deviceWrap] = await db.select().from(fileShareDeviceKeysTable).where(and(eq(fileShareDeviceKeysTable.fileShareId, share.id), eq(fileShareDeviceKeysTable.recipientDeviceKeyId, deviceKeyId))).limit(1);
+      const legacyWrap = share.recipientDeviceKeyId === deviceKeyId && share.wrappedFileKey && share.wrappingIv && share.wrappingAlgorithm
+        ? { recipientDeviceKeyId: deviceKeyId, wrappedFileKey: share.wrappedFileKey, wrappingIv: share.wrappingIv, wrappingAlgorithm: share.wrappingAlgorithm }
+        : null;
+      const selectedWrap = deviceWrap ?? legacyWrap;
+      if (!selectedWrap) { res.status(404).json({ error: "This share was not encrypted for this device." }); return; }
       const [ownerKey] = await db.select({ publicKey: userDeviceKeysTable.publicKey }).from(userDeviceKeysTable).where(eq(userDeviceKeysTable.id, share.ownerDeviceKeyId)).limit(1);
       if (!ownerKey) { res.status(409).json({ error: "Owner device key is unavailable." }); return; }
       const [file] = await db.select({ iv: filesTable.iv }).from(filesTable).where(eq(filesTable.id, share.fileId)).limit(1);
       if (!file?.iv) { res.status(409).json({ error: "File encryption metadata is unavailable." }); return; }
-      res.json({ wrappedFileKey: share.wrappedFileKey, wrappingIv: share.wrappingIv, wrappingAlgorithm: share.wrappingAlgorithm, ownerPublicKey: ownerKey.publicKey, ownerDeviceKeyId: share.ownerDeviceKeyId, recipientDeviceKeyId: share.recipientDeviceKeyId, fileIv: file.iv });
+      res.json({ wrappedFileKey: selectedWrap.wrappedFileKey, wrappingIv: selectedWrap.wrappingIv, wrappingAlgorithm: selectedWrap.wrappingAlgorithm, ownerPublicKey: ownerKey.publicKey, ownerDeviceKeyId: share.ownerDeviceKeyId, recipientDeviceKeyId: selectedWrap.recipientDeviceKeyId, fileIv: file.iv });
     } catch (error) { logger.error({ err: error }, "Failed to load secure share key"); res.status(500).json({ error: "Failed to load secure share key." }); }
   },
 );
@@ -723,11 +475,11 @@ router.post(
         return;
       }
 
-      const { recipientId, recipientDeviceKeyId, ownerDeviceKeyId, wrappedFileKey, wrappingIv, wrappingAlgorithm } = req.body ?? {};
+      const { recipientId, ownerDeviceKeyId, recipientDeviceKeys } = req.body ?? {};
       const permission: SharePermission =
         req.body?.permission === "editor" ? "editor" : "viewer";
 
-      if (![recipientId, recipientDeviceKeyId, ownerDeviceKeyId, wrappedFileKey, wrappingIv, wrappingAlgorithm].every(v => typeof v === "string" && v.length > 0)) {
+      if (typeof recipientId !== "string" || typeof ownerDeviceKeyId !== "string" || !Array.isArray(recipientDeviceKeys) || !recipientDeviceKeys.length) {
         res.status(400).json({ error: "Wrapped-key sharing metadata is required." });
         return;
       }
@@ -736,19 +488,23 @@ router.post(
         res.status(403).json({ error: "Recipient is not an authorized teammate." });
         return;
       }
-      const [recipientKey] = await db.select().from(userDeviceKeysTable).where(and(eq(userDeviceKeysTable.id, recipientDeviceKeyId), eq(userDeviceKeysTable.userId, recipientId), isNull(userDeviceKeysTable.revokedAt))).limit(1);
       const [ownerKey] = await db.select().from(userDeviceKeysTable).where(and(eq(userDeviceKeysTable.id, ownerDeviceKeyId), eq(userDeviceKeysTable.userId, clerkId), isNull(userDeviceKeysTable.revokedAt))).limit(1);
-      if (!recipientKey || !ownerKey) { res.status(409).json({ error: "An active device key is required for both users." }); return; }
+      const recipientKeyIds = recipientDeviceKeys.map((key: unknown) => typeof key === "object" && key ? (key as { recipientDeviceKeyId?: unknown }).recipientDeviceKeyId : "");
+      if (!recipientKeyIds.every((id: unknown) => typeof id === "string") || new Set(recipientKeyIds).size !== recipientKeyIds.length || !ownerKey) { res.status(409).json({ error: "Valid active device keys are required." }); return; }
+      const recipientKeys = await db.select().from(userDeviceKeysTable).where(and(inArray(userDeviceKeysTable.id, recipientKeyIds as string[]), eq(userDeviceKeysTable.userId, recipientId), isNull(userDeviceKeysTable.revokedAt)));
+      if (recipientKeys.length !== recipientKeyIds.length || recipientDeviceKeys.some((key: unknown) => { const value = key as Record<string, unknown>; return !value || typeof value.wrappedFileKey !== "string" || typeof value.wrappingIv !== "string" || value.wrappingAlgorithm !== "ECDH-P256/HKDF-SHA256/AES-256-GCM"; })) { res.status(409).json({ error: "Valid active device keys are required." }); return; }
 
-      await db
+      const [share] = await db
         .insert(fileSharesTable)
         .values(
           [{ fileId: rows[0].id, sharedWithUserId: recipientId,
             sharedByUserId: clerkId,
-            permission,
-            recipientDeviceKeyId, ownerDeviceKeyId, wrappedFileKey, wrappingIv, wrappingAlgorithm }],
+            permission, ownerDeviceKeyId }],
         )
-        .onConflictDoUpdate({ target: [fileSharesTable.fileId, fileSharesTable.sharedWithUserId], set: { recipientDeviceKeyId, ownerDeviceKeyId, wrappedFileKey, wrappingIv, wrappingAlgorithm } });
+        .onConflictDoUpdate({ target: [fileSharesTable.fileId, fileSharesTable.sharedWithUserId], set: { ownerDeviceKeyId, permission } })
+        .returning({ id: fileSharesTable.id });
+      await db.delete(fileShareDeviceKeysTable).where(eq(fileShareDeviceKeysTable.fileShareId, share.id));
+      await db.insert(fileShareDeviceKeysTable).values(recipientDeviceKeys.map((key: { recipientDeviceKeyId: string; wrappedFileKey: string; wrappingIv: string; wrappingAlgorithm: string }) => ({ fileShareId: share.id, ...key })));
 
       res.json({ success: true, sharedWith: recipientIds });
       return;

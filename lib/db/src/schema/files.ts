@@ -118,6 +118,24 @@ export const fileSharesTable = pgTable(
   ],
 ).enableRLS();
 
+/** One wrapped copy of a file key per recipient device. */
+export const fileShareDeviceKeysTable = pgTable(
+  "file_share_device_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    fileShareId: uuid("file_share_id").notNull().references(() => fileSharesTable.id, { onDelete: "cascade" }),
+    recipientDeviceKeyId: uuid("recipient_device_key_id").notNull().references(() => userDeviceKeysTable.id),
+    wrappedFileKey: text("wrapped_file_key").notNull(),
+    wrappingIv: text("wrapping_iv").notNull(),
+    wrappingAlgorithm: text("wrapping_algorithm").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("file_share_device_keys_unique_idx").on(table.fileShareId, table.recipientDeviceKeyId),
+    index("file_share_device_keys_recipient_idx").on(table.recipientDeviceKeyId),
+  ],
+).enableRLS();
+
 /** Public ECDH keys only. Private device keys never leave the client. */
 export const userDeviceKeysTable = pgTable(
   "user_device_keys",
@@ -129,7 +147,10 @@ export const userDeviceKeysTable = pgTable(
     createdAt: timestamp("created_at").notNull().defaultNow(),
     revokedAt: timestamp("revoked_at"),
   },
-  (table) => [index("user_device_keys_user_idx").on(table.userId)],
+  (table) => [
+    index("user_device_keys_user_idx").on(table.userId),
+    uniqueIndex("user_device_keys_user_public_key_unique_idx").on(table.userId, table.publicKey),
+  ],
 ).enableRLS();
 
 // Zod schemas

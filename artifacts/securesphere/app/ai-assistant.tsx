@@ -59,7 +59,7 @@ export default function AIAssistant() {
       <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
         {!isUser && (
           <View style={styles.aiAvatar}>
-            <Ionicons name="sparkles" size={16} color="#050B18" />
+            <Ionicons name="sparkles" size={16} color="#F5F9FF" />
           </View>
         )}
         <View style={[
@@ -84,8 +84,8 @@ export default function AIAssistant() {
           <Ionicons name="arrow-back" size={20} color={colors.foreground} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
-          <LinearGradient colors={['#00D4FF', '#0066FF']} style={styles.aiIconBg}>
-            <Ionicons name="sparkles" size={18} color="#050B18" />
+          <LinearGradient colors={['#A855F7', '#7C3AED']} style={styles.aiIconBg}>
+            <Ionicons name="sparkles" size={18} color="#F5F9FF" />
           </LinearGradient>
           <View>
             <Text style={[styles.headerTitle, { color: colors.foreground }]}>SecureAI</Text>
@@ -109,7 +109,7 @@ export default function AIAssistant() {
           ListFooterComponent={isTyping ? (
             <View style={styles.typingRow}>
               <View style={styles.aiAvatar}>
-                <Ionicons name="sparkles" size={16} color="#050B18" />
+                <Ionicons name="sparkles" size={16} color="#F5F9FF" />
               </View>
               <View style={[styles.bubble, styles.typingBubble, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <View style={styles.typingDots}>
@@ -156,7 +156,7 @@ const styles = StyleSheet.create({
   messageList: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8, gap: 12 },
   messageRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   messageRowUser: { justifyContent: 'flex-end' },
-  aiAvatar: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#00D4FF', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  aiAvatar: { width: 32, height: 32, borderRadius: 10, backgroundColor: '#A855F7', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   bubble: { maxWidth: '80%', padding: 12, borderRadius: 16 },
   bubbleText: { fontSize: 14, fontFamily: 'Inter_400Regular', lineHeight: 20 },
   typingRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginTop: 4 },

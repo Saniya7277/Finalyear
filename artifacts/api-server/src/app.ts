@@ -25,10 +25,11 @@ app.use(
     },
   }),
 );
-app.use(cors());
+app.use(cors({ origin: true, methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type"], credentials: false }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
 
 export default app;
+
